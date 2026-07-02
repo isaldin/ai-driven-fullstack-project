@@ -64,9 +64,9 @@ Docker Compose on a VPS, automated with Ansible. Optional self-hosted observabil
 as an off-by-default Compose profile.
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml up -d          # base stack
-docker compose -f infra/docker/docker-compose.yml --profile observability up -d   # + OpenObserve
-pnpm deploy:vps                                                   # Ansible deploy
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d          # base stack
+docker compose --env-file .env -f infra/docker/docker-compose.yml --profile observability up -d   # + OpenObserve
+pnpm deploy:vps                                                   # Ansible deploy (renders .env, passes --env-file)
 ```
 
 Manage secrets with Ansible Vault or SOPS — never commit a real `.env`.

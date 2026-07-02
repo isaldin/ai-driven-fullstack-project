@@ -1,13 +1,17 @@
 # ─────────────────────────────────────────────────────────────
 # Full-stack deployment for the AI-ready monorepo template.
 #
-# Run from the repo root:
-#   docker compose -f infra/docker/docker-compose.yml up -d --build
+# Run from the repo root. Pass the root .env EXPLICITLY with --env-file: Compose
+# resolves ${VAR} interpolation (published ports, `environment:` secrets, the
+# frontend VITE_API_URL build arg) from the compose file's own directory
+# (infra/docker/), NOT the repo root — so a bare `-f infra/docker/...` does NOT
+# read ./.env and silently uses the `change-me` defaults below:
+#   docker compose --env-file .env -f infra/docker/docker-compose.yml up -d --build
 #
-# Values come from the repo-root .env (optional) with inline defaults, so the
-# file also parses and runs with no .env present. The `observability` profile
-# (OpenObserve — OTLP metrics/traces/logs backend) is OFF by default:
-#   docker compose -f infra/docker/docker-compose.yml --profile observability up -d
+# With no .env it still parses/runs on the inline defaults (fine for a throwaway
+# local spin, NOT production). The `observability` profile (OpenObserve — OTLP
+# metrics/traces/logs backend) is OFF by default:
+#   docker compose --env-file .env -f infra/docker/docker-compose.yml --profile observability up -d
 #
 # Build context is the repo root (../..); Dockerfiles live under infra/docker/.
 # ─────────────────────────────────────────────────────────────

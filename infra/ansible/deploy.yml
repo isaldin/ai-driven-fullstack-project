@@ -67,23 +67,30 @@
       no_log: true
 
     # --- Build, migrate, run ----------------------------------------------
+    # NOTE: `--env-file .env` is REQUIRED. Compose resolves `${VAR}` interpolation
+    # (published ports, secrets in `environment:`, the frontend VITE_API_URL build
+    # arg) from the project directory, which defaults to the COMPOSE FILE's dir
+    # (infra/docker/) — not the repo root. Without --env-file the rendered
+    # {{ app_dir }}/.env is ignored and the stack silently falls back to the
+    # `change-me` defaults baked into docker-compose.yml. chdir is the repo root,
+    # so `.env` here resolves to {{ app_dir }}/.env.
     - name: Build images
       ansible.builtin.command:
-        cmd: "docker compose -f {{ compose_file }} build"
+        cmd: "docker compose -f {{ compose_file }} --env-file .env build"
         chdir: "{{ app_dir }}"
       register: compose_build
       changed_when: "'Building' in compose_build.stderr or 'DONE' in compose_build.stderr or compose_build.rc == 0"
 
     - name: Start database and cache (so migrations have a target)
       ansible.builtin.command:
-        cmd: "docker compose -f {{ compose_file }} up -d postgres redis"
+        cmd: "docker compose -f {{ compose_file }} --env-file .env up -d postgres redis"
         chdir: "{{ app_dir }}"
       changed_when: true
 
     - name: Run database migrations (zen migrate deploy — idempotent)
       ansible.builtin.command:
         cmd: >
-          docker compose -f {{ compose_file }} run --rm
+          docker compose -f {{ compose_file }} --env-file .env run --rm
           backend pnpm --filter @app/backend db:migrate
         chdir: "{{ app_dir }}"
       register: db_migrate
@@ -92,7 +99,7 @@
     - name: Bring the full stack up
       ansible.builtin.command:
         cmd: >
-          docker compose -f {{ compose_file }}
+          docker compose -f {{ compose_file }} --env-file .env
           {% for p in compose_profiles %}--profile {{ p }} {% endfor %}up -d
         chdir: "{{ app_dir }}"
       changed_when: true
