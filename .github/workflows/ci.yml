@@ -64,6 +64,11 @@ jobs:
         run: pnpm build
 
       - name: Backend e2e tests
+        # `localhost` is correct on GitHub-hosted runners: the job runs directly on
+        # the VM and the postgres service is port-mapped to localhost. On container-
+        # based runners (self-hosted Gitea act_runner / nektos `act`) the job runs in
+        # a container and the service is a sibling reachable by name — set a repo/org
+        # Actions variable E2E_DB_HOST=postgres there.
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app_e2e
+          DATABASE_URL: postgresql://postgres:postgres@${{ vars.E2E_DB_HOST || 'localhost' }}:5432/app_e2e
         run: pnpm --filter @app/backend test:e2e
