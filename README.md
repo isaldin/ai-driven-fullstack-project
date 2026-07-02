@@ -7,6 +7,7 @@ immediately understand: clear package boundaries, predictable scripts, and insta
 **ZenStack v3** · pnpm + Turborepo (ESM) · Biome · Vitest · OpenTelemetry · Docker Compose + Ansible.
 
 See [`AGENTS.md`](./AGENTS.md) for the agent/developer guide and [the design spec](./docs/superpowers/specs/2026-07-02-ai-ready-monorepo-template-design.md) for rationale.
+New here? **[`docs/QUICKSTART.md`](./docs/QUICKSTART.md)** covers local dev plus the three steps to turn this template into your own project (git remote, vault secrets, bot token).
 
 ## Quick start
 

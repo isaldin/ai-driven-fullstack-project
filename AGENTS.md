@@ -42,7 +42,7 @@ infra/
   docker/         Dockerfiles + docker-compose.yml
   ansible/        VPS deploy playbooks
 scripts/          install-skills.sh
-docs/             design spec
+docs/             QUICKSTART.md (template -> your project) + design spec
 ```
 
 ## Commands (run from repo root)
@@ -94,6 +94,32 @@ Copy `.env.example` to `.env` first.
 - Vitest across the repo. Backend unit tests are `src/**/*.spec.ts`; e2e is `test/**/*.e2e-spec.ts`
   and runs the real Nest app against a real Postgres (a dedicated `app_e2e` DB it creates and pushes).
 - Policy/e2e tests must run against a real Postgres, not mocks.
+
+## Deploy & CI — operational invariants (verified; easy to break)
+
+These were verified end-to-end (live Compose deploy on a simulated VPS + a green CI run on a
+GitHub-Actions-compatible runner). Keep them intact:
+
+- **Compose requires `--env-file .env` explicitly.** `docker compose` resolves `${VAR}` interpolation
+  (published ports, `environment:` secrets, the frontend `VITE_API_URL` build arg) from the compose
+  file's own directory (`infra/docker/`), NOT the repo root. Without `--env-file .env` the rendered
+  root `.env` is ignored and the stack silently falls back to the `change-me` defaults. The Ansible
+  deploy (`infra/ansible/deploy.yml`) and the README/Compose commands already pass it — never drop it.
+- **`BACKEND_PORT` maps host→container `3000`** (`"${BACKEND_PORT:-3000}:3000"`) and the app listens on
+  `BACKEND_PORT` inside the container. Only `3000` keeps the published and listen ports aligned; you can
+  remap the postgres/redis/frontend host ports freely, but leave backend at `3000` (or change both sides).
+- **Migrations are committed; the generated client is not.** `apps/backend/src/zenstack/migrations/` is
+  tracked — a real deploy runs `zen migrate deploy` off it, and without it the prod DB gets no tables.
+  Only `src/zenstack/{schema,models,input}.ts` + `~schema.prisma` are gitignored. Do not gitignore the
+  migrations dir; do commit a new migration after `pnpm db:migrate:dev`.
+- **CI e2e DB host differs by runner type.** GitHub-hosted: the job runs on the VM, Postgres service on
+  `localhost:5432`. Container runners (Gitea `act_runner` / nektos `act`): the job runs in a container,
+  service reachable as `postgres:5432`. `.github/workflows/ci.yml` uses `${{ vars.E2E_DB_HOST || 'localhost' }}`
+  — set the `E2E_DB_HOST=postgres` Actions variable on self-hosted runners.
+- **The bot needs a real `TELEGRAM_BOT_TOKEN`** or it crash-loops (grammY `getMe`). The placeholder is
+  fine for build/typecheck/deploy dry-runs, not for a running stack.
+
+New-project fill-in steps (remote, vault secrets, bot token): see [`docs/QUICKSTART.md`](./docs/QUICKSTART.md).
 
 ## Code style
 
