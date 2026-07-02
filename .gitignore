@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# turbo
+.turbo/
+
+# env
+.env
+.env.*
+!.env.example
+
+# ZenStack generated client (run `pnpm db:generate` to recreate)
+apps/backend/src/zenstack/schema.ts
+apps/backend/src/zenstack/models.ts
+apps/backend/src/zenstack/input.ts
+apps/backend/src/zenstack/~schema.prisma
+
+# logs / coverage
+*.log
+coverage/
+
+# vite
+apps/frontend/dist/
+apps/frontend/.vite/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ansible secrets (decrypted vault must never be committed)
+infra/ansible/vault.yml
+infra/ansible/group_vars/all/vault.yml

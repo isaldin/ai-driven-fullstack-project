@@ -1,0 +1,16 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Native/postinstall build scripts we trust (pnpm 11 blocks these by default).
+allowBuilds:
+  "@prisma/engines": true
+  "@scarf/scarf": false
+  "@swc/core": true
+  argon2: true
+  prisma: true
+  protobufjs: true
+  vue-demi: true
+
+minimumReleaseAgeExclude:
+  - vite@8.1.3

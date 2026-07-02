@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────
+# Non-secret deployment defaults (committed to git).
+#
+# SECRETS DO NOT BELONG HERE. Override the `vault_*` values below from an
+# encrypted vault file — see README.md. The `change-me` placeholders let the
+# playbook parse and dry-run, but a real deploy must supply real secrets.
+# ─────────────────────────────────────────────────────────────
+
+# --- Where and what to deploy ---------------------------------------------
+app_dir: /opt/app
+repo_url: "https://github.com/your-org/your-repo.git"
+repo_version: main
+compose_file: infra/docker/docker-compose.yml
+compose_profiles: [] # e.g. ["observability"] to also run OpenObserve
+
+# --- Non-secret runtime config (baked into the target .env) ---------------
+node_env: production
+backend_port: 3000
+frontend_port: 8080
+
+postgres_user: app
+postgres_db: app
+postgres_port: 5432
+redis_port: 6379
+
+# Public-facing origins — set these to your real domains.
+cors_origin: "https://app.example.com"
+cookie_domain: "example.com"
+vite_api_url: "https://api.example.com"
+backend_url: "http://backend:3000" # in-network service address for the bot
+
+# Observability (OTLP -> OpenObserve). Disabled by default.
+log_level: info
+otel_service_name: app
+otel_sdk_disabled: "true"
+otel_exporter_otlp_endpoint: "http://openobserve:5080/api/default"
+otel_exporter_otlp_headers: ""
+metrics_exporter: otlp
+
+# --- Secrets: OVERRIDE these from an encrypted vault ----------------------
+# (kept here as placeholders only so the template is self-documenting)
+vault_postgres_password: "change-me"
+vault_database_url: "postgresql://app:change-me@postgres:5432/app"
+vault_jwt_access_secret: "change-me-access-secret-min-32-chars-long"
+vault_jwt_refresh_secret: "change-me-refresh-secret-min-32-chars-long"
+vault_service_api_token: "change-me-service-token"
+vault_telegram_bot_token: "000000:replace-with-botfather-token"
+vault_redis_url: "redis://redis:6379"
+vault_sentry_dsn: ""
+vault_openobserve_email: "admin@example.com"
+vault_openobserve_password: "change-me"

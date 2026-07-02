@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1.7
+# ─────────────────────────────────────────────────────────────
+# @app/backend — NestJS (ESM, Node 22) production image.
+#
+# Base image choice: Debian "bookworm-slim", NOT Alpine.
+#   - `argon2` is a native (node-gyp) addon; prebuilt binaries and the
+#     compile-from-source fallback are far more reliable on glibc than on
+#     Alpine's musl.
+#   - `zen migrate deploy` (run at container start via docker-compose) wraps
+#     Prisma Migrate, whose engine binaries target glibc/OpenSSL; musl needs
+#     the `linux-musl-openssl-3.0.x` engine plus libc6-compat, which is a
+#     common source of "engine not found" failures. Debian avoids all of it.
+#
+# Leanness comes from `turbo prune --docker`: only @app/backend and its
+# internal workspace deps (config/contracts/observability/tsconfig) end up in
+# the image, not the frontend or telegram-bot trees.
+# ─────────────────────────────────────────────────────────────
+
+# ---- base: toolchain shared by every stage ----------------------------------
+FROM node:22-bookworm-slim AS base
+ENV CI=true
+# python3/make/g++ -> native builds (argon2); openssl -> Prisma engine runtime.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 make g++ openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
+    && corepack prepare pnpm@11.9.0 --activate
+WORKDIR /app
+
+# ---- pruner: compute the @app/backend subset of the monorepo -----------------
+FROM base AS pruner
+COPY . .
+# No node_modules yet, so fetch turbo on the fly to compute the pruned subset.
+RUN pnpm dlx turbo@2.10.2 prune @app/backend --docker
+
+# ---- installer: install deps + build backend and its workspace deps ----------
+FROM base AS installer
+# 1) Lockfile + package.json manifests first for a cacheable install layer.
+COPY --from=pruner /app/out/json/ ./
+RUN pnpm install --frozen-lockfile
+# 2) Pruned source, then generate the ZenStack client and build via turbo
+#    (turbo is a root devDep installed above). `turbo run build` resolves the
+#    DAG: db:generate + ^build (internal workspace deps) run before
+#    @app/backend's own `tsc` build.
+COPY --from=pruner /app/out/full/ ./
+RUN pnpm exec turbo run build --filter=@app/backend
+
+# ---- runner: minimal runtime -------------------------------------------------
+FROM base AS runner
+ENV NODE_ENV=production \
+    BACKEND_PORT=3000 \
+    COREPACK_HOME=/home/node/.corepack
+# Copy the whole pruned workspace: pnpm's symlinked node_modules can't be
+# partially copied safely, and the runtime needs the `zen` CLI + Prisma engine
+# (for `zen migrate deploy` at start) alongside the built dist.
+COPY --from=installer --chown=node:node /app ./
+USER node
+# Pre-cache pnpm for the node user so the compose migrate step
+# (`pnpm --filter @app/backend db:migrate`) never downloads at container start.
+RUN corepack prepare pnpm@11.9.0 --activate
+EXPOSE 3000
+# Node 22 ships global fetch; probe the liveness endpoint with no extra tools.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:'+(process.env.BACKEND_PORT||3000)+'/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# Default command runs the server only. Migrations are applied by the
+# orchestrator (docker-compose / ansible), never during image build.
+CMD ["node", "apps/backend/dist/main.js"]

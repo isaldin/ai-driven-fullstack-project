@@ -1,0 +1,104 @@
+---
+# ─────────────────────────────────────────────────────────────
+# VPS deployment playbook.
+#
+#   pnpm deploy:vps
+#     -> ansible-playbook -i infra/ansible/inventory.ini infra/ansible/deploy.yml
+#
+# Add `--ask-vault-pass` (or --vault-password-file) when a vault.yml is present.
+# Non-secret config lives in group_vars/all.yml; secrets in an encrypted vault
+# (see README.md). Tasks are idempotent — re-running only changes what drifted.
+# ─────────────────────────────────────────────────────────────
+- name: Deploy the monorepo stack via Docker Compose
+  hosts: app
+  become: true
+  gather_facts: true
+
+  tasks:
+    # --- Optional encrypted secrets ---------------------------------------
+    # Loaded only if an (encrypted) vault file exists next to the playbook, so
+    # the template still parses/dry-runs without one. Overrides the `vault_*`
+    # placeholders defined in group_vars/all.yml.
+    - name: Load vaulted secrets if present
+      ansible.builtin.include_vars: "{{ item }}"
+      no_log: true
+      loop: "{{ query('fileglob', playbook_dir + '/group_vars/all/vault.yml') + query('fileglob', playbook_dir + '/vault.yml') }}"
+
+    # --- Pre-flight: Docker + Compose plugin ------------------------------
+    - name: Ensure the docker CLI is installed
+      ansible.builtin.command: docker --version
+      register: docker_version
+      changed_when: false
+      failed_when: docker_version.rc != 0
+
+    - name: Ensure the docker compose plugin is available
+      ansible.builtin.command: docker compose version
+      register: compose_version
+      changed_when: false
+      failed_when: compose_version.rc != 0
+
+    - name: Ensure the docker daemon is running
+      ansible.builtin.command: docker info
+      register: docker_info
+      changed_when: false
+      failed_when: docker_info.rc != 0
+
+    # --- Sync source ------------------------------------------------------
+    - name: Ensure the application directory exists
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Clone or update the repository
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repo_version }}"
+        force: true
+      register: repo_sync
+
+    # --- Render environment file ------------------------------------------
+    - name: Template the runtime .env (0600, root-owned)
+      ansible.builtin.template:
+        src: templates/env.j2
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+      no_log: true
+
+    # --- Build, migrate, run ----------------------------------------------
+    - name: Build images
+      ansible.builtin.command:
+        cmd: "docker compose -f {{ compose_file }} build"
+        chdir: "{{ app_dir }}"
+      register: compose_build
+      changed_when: "'Building' in compose_build.stderr or 'DONE' in compose_build.stderr or compose_build.rc == 0"
+
+    - name: Start database and cache (so migrations have a target)
+      ansible.builtin.command:
+        cmd: "docker compose -f {{ compose_file }} up -d postgres redis"
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Run database migrations (zen migrate deploy — idempotent)
+      ansible.builtin.command:
+        cmd: >
+          docker compose -f {{ compose_file }} run --rm
+          backend pnpm --filter @app/backend db:migrate
+        chdir: "{{ app_dir }}"
+      register: db_migrate
+      changed_when: "'Applying migration' in db_migrate.stdout"
+
+    - name: Bring the full stack up
+      ansible.builtin.command:
+        cmd: >
+          docker compose -f {{ compose_file }}
+          {% for p in compose_profiles %}--profile {{ p }} {% endfor %}up -d
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    # --- Housekeeping -----------------------------------------------------
+    - name: Prune dangling images to reclaim disk
+      ansible.builtin.command: docker image prune -f
+      register: image_prune
+      changed_when: "'Total reclaimed space: 0B' not in image_prune.stdout"

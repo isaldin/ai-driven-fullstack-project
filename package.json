@@ -1,0 +1,34 @@
+{
+  "name": "ai-ready-monorepo-template",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "test:watch": "turbo run test:watch",
+    "typecheck": "turbo run typecheck",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "db:generate": "turbo run db:generate",
+    "db:migrate": "pnpm --filter @app/backend db:migrate",
+    "db:migrate:dev": "pnpm --filter @app/backend db:migrate:dev",
+    "db:seed": "pnpm --filter @app/backend db:seed",
+    "docker:up": "docker compose -f infra/docker/docker-compose.yml up -d postgres redis",
+    "docker:down": "docker compose -f infra/docker/docker-compose.yml down",
+    "deploy:vps": "ansible-playbook -i infra/ansible/inventory.ini infra/ansible/deploy.yml",
+    "skills:install": "bash scripts/install-skills.sh"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.2",
+    "@types/node": "26.1.0",
+    "turbo": "2.10.2",
+    "typescript": "5.9.3"
+  }
+}

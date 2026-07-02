@@ -1,0 +1,167 @@
+# ─────────────────────────────────────────────────────────────
+# Full-stack deployment for the AI-ready monorepo template.
+#
+# Run from the repo root:
+#   docker compose -f infra/docker/docker-compose.yml up -d --build
+#
+# Values come from the repo-root .env (optional) with inline defaults, so the
+# file also parses and runs with no .env present. The `observability` profile
+# (OpenObserve — OTLP metrics/traces/logs backend) is OFF by default:
+#   docker compose -f infra/docker/docker-compose.yml --profile observability up -d
+#
+# Build context is the repo root (../..); Dockerfiles live under infra/docker/.
+# ─────────────────────────────────────────────────────────────
+
+name: app
+
+services:
+  # ---- Postgres ------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---- Redis ---------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ---- Backend (NestJS API) ------------------------------------------------
+  backend:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.backend
+    restart: unless-stopped
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      BACKEND_PORT: ${BACKEND_PORT:-3000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access-secret-min-32-chars-long}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh-secret-min-32-chars-long}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-900}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-1209600}
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:-change-me-service-token}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-app-backend}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://openobserve:5080/api/default}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      METRICS_EXPORTER: ${METRICS_EXPORTER:-otlp}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    # Apply migrations, then start the server. `zen migrate deploy` is safe to
+    # run on every boot (no-op when already up to date).
+    command: >
+      sh -c "pnpm --filter @app/backend db:migrate && node apps/backend/dist/main.js"
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "fetch('http://127.0.0.1:'+(process.env.BACKEND_PORT||3000)+'/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # ---- Frontend (static SPA via nginx) -------------------------------------
+  frontend:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.frontend
+      args:
+        # Baked into the bundle at build time.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      - backend
+
+  # ---- Telegram bot (long-polling worker) ----------------------------------
+  telegram-bot:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.bot
+    restart: unless-stopped
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-000000:replace-with-botfather-token}
+      BACKEND_URL: ${BACKEND_URL:-http://backend:3000}
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:-change-me-service-token}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-app-telegram-bot}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://openobserve:5080/api/default}
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ---- OpenObserve (optional OTLP backend) ---------------------------------
+  # Metrics / traces / logs sink. Disabled unless the `observability` profile
+  # is enabled. UI + OTLP HTTP on :5080.
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:latest
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      ZO_ROOT_USER_EMAIL: ${ZO_ROOT_USER_EMAIL:-admin@example.com}
+      ZO_ROOT_USER_PASSWORD: ${ZO_ROOT_USER_PASSWORD:-ChangeMe123!}
+      ZO_DATA_DIR: /data
+    volumes:
+      - openobserve_data:/data
+    ports:
+      - "${OPENOBSERVE_PORT:-5080}:5080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  postgres_data:
+  redis_data:
+  openobserve_data:

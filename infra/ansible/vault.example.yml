@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────
+# Secrets template. Copy to a real vault file and ENCRYPT it:
+#
+#   cp infra/ansible/vault.example.yml infra/ansible/vault.yml
+#   ansible-vault encrypt infra/ansible/vault.yml
+#
+# deploy.yml auto-loads infra/ansible/vault.yml (or group_vars/all/vault.yml)
+# when present, overriding the `vault_*` placeholders in group_vars/all.yml.
+# Never commit the decrypted file. See README.md.
+# ─────────────────────────────────────────────────────────────
+
+vault_postgres_password: "REPLACE_WITH_STRONG_PASSWORD"
+vault_database_url: "postgresql://app:REPLACE_WITH_STRONG_PASSWORD@postgres:5432/app"
+vault_jwt_access_secret: "REPLACE_WITH_32+_CHAR_RANDOM_SECRET"
+vault_jwt_refresh_secret: "REPLACE_WITH_32+_CHAR_RANDOM_SECRET"
+vault_service_api_token: "REPLACE_WITH_RANDOM_TOKEN"
+vault_telegram_bot_token: "123456:REPLACE_WITH_BOTFATHER_TOKEN"
+vault_redis_url: "redis://redis:6379"
+vault_sentry_dsn: ""
+vault_openobserve_email: "admin@example.com"
+vault_openobserve_password: "REPLACE_WITH_STRONG_PASSWORD"

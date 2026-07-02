@@ -1,0 +1,34 @@
+# Keep Docker build contexts lean and deterministic.
+# Everything the images need is regenerated inside the build
+# (deps via `pnpm install`, client via `zen generate`, output via `turbo build`).
+
+**/node_modules
+**/dist
+**/.turbo
+.turbo
+**/coverage
+**/*.tsbuildinfo
+
+# VCS / editor / OS
+.git
+.gitignore
+.idea
+.vscode
+**/.DS_Store
+
+# Secrets & local env (never bake into an image layer)
+.env
+.env.*
+!.env.example
+
+# Generated ZenStack client (recreated by `zen generate` during build)
+apps/backend/src/zenstack/schema.ts
+apps/backend/src/zenstack/models.ts
+apps/backend/src/zenstack/input.ts
+apps/backend/src/zenstack/~schema.prisma
+
+# Logs
+**/*.log
+
+# Docs & infra not needed inside app images
+docs

@@ -1,0 +1,32 @@
+{
+  "name": "@app/telegram-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "dev": "node --watch --import @swc-node/register/esm-register src/index.ts"
+  },
+  "dependencies": {
+    "@app/api-client": "workspace:*",
+    "@app/config": "workspace:*",
+    "@app/contracts": "workspace:*",
+    "@app/observability": "workspace:*",
+    "@grammyjs/storage-redis": "2.5.1",
+    "grammy": "1.44.0",
+    "ioredis": "5.11.1"
+  },
+  "devDependencies": {
+    "@app/tsconfig": "workspace:*",
+    "@swc-node/register": "1.11.1",
+    "@swc/core": "1.15.43",
+    "@types/node": "26.1.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.9"
+  }
+}
