@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "skills": {
+    "ansible-automation": {
+      "source": "aj-geddes/useful-ai-prompts",
+      "sourceType": "github",
+      "skillPath": "skills/ansible-automation/SKILL.md",
+      "computedHash": "2f6b7fc42258730ea802f64f80c63ba140e3a601c25b9423babe9ab61b140b21"
+    },
+    "architecture-designer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "skillPath": "skills/architecture-designer/SKILL.md",
+      "computedHash": "ecb729710037e01080fd2c342f37d2c25b3597bec70b8d529f9604abd8ccc142"
+    },
+    "backend-development": {
+      "source": "mrgoonie/claudekit-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/backend-development/SKILL.md",
+      "computedHash": "19a6a72ddb96062c3edef801451bd721726dd571f7db221f0b4d83ad70aad114"
+    },
+    "clean-ddd-hexagonal": {
+      "source": "ccheney/robust-skills",
+      "sourceType": "github",
+      "skillPath": "skills/clean-ddd-hexagonal/SKILL.md",
+      "computedHash": "223df951adb9adf655b139221d4a3b68a314f5a0c24c8bc137a754ce9dee5713"
+    },
+    "devops-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "skillPath": "skills/devops-engineer/SKILL.md",
+      "computedHash": "6de5e562151fe9c227234e81bdc1e647066d6b1822463eadf296a5344b47e35a"
+    },
+    "nestjs-best-practices": {
+      "source": "kadajett/agent-nestjs-skills",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "fff896300fe25d6d2e41161da12a5b05d0d57a8adb2390c72fbb7a72e0d02440"
+    },
+    "nodejs-backend-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/javascript-typescript/skills/nodejs-backend-patterns/SKILL.md",
+      "computedHash": "b63b54d09c77cec0e84cdd42424c12909785f14bdb286c835c45420b885ff1f3"
+    },
+    "telegram-bot": {
+      "source": "claude-office-skills/skills",
+      "sourceType": "github",
+      "skillPath": "telegram-bot/SKILL.md",
+      "computedHash": "8c9554098e2f9c4baa53980e09f3bd7374034c1948e73341b691a33ebb473db9"
+    },
+    "vue-best-practices": {
+      "source": "hyf0/vue-skills",
+      "sourceType": "github",
+      "skillPath": "skills/vue-best-practices/SKILL.md",
+      "computedHash": "3df585ad31aec78fe55c56c1411262737e6b231677a3153dec512a882fde80cd"
+    },
+    "zenstack-access-control": {
+      "source": "zenstackhq/skills",
+      "sourceType": "github",
+      "skillPath": "skills/zenstack-access-control/SKILL.md",
+      "computedHash": "93ac8a3ace50f267c9e032eb1d38171d5f6e8103eedcbbe0f6abcb5037a1a6b3"
+    },
+    "zenstack-crud-server": {
+      "source": "zenstackhq/skills",
+      "sourceType": "github",
+      "skillPath": "skills/zenstack-crud-server/SKILL.md",
+      "computedHash": "9a194cded79e266bf227ec27a29925709a335e5cd74819f7f271e92673bb82f9"
+    },
+    "zenstack-db-migration": {
+      "source": "zenstackhq/skills",
+      "sourceType": "github",
+      "skillPath": "skills/zenstack-db-migration/SKILL.md",
+      "computedHash": "00f13e1bf20805a9acfa911addd404fabebf84a07c0e63e277c62372659c144b"
+    },
+    "zenstack-project-setup": {
+      "source": "zenstackhq/skills",
+      "sourceType": "github",
+      "skillPath": "skills/zenstack-project-setup/SKILL.md",
+      "computedHash": "38f6d4cf0046a8017684bf6df827498bcada72bf2e50e6765fdfdf93146e1cb7"
+    },
+    "zenstack-querying": {
+      "source": "zenstackhq/skills",
+      "sourceType": "github",
+      "skillPath": "skills/zenstack-querying/SKILL.md",
+      "computedHash": "9aab0e4440b4bff4ea67b38933cbaafb15d4af91ae1e6d84b274c6a575d855a9"
+    },
+    "zenstack-schema-modeling": {
+      "source": "zenstackhq/skills",
+      "sourceType": "github",
+      "skillPath": "skills/zenstack-schema-modeling/SKILL.md",
+      "computedHash": "452f7b1cb000692e196ebc74ef12698dc4749153ac39a42bd36e551d35f7e309"
+    }
+  }
+}

@@ -23,7 +23,7 @@
     "docker:up": "docker compose -f infra/docker/docker-compose.yml up -d postgres redis",
     "docker:down": "docker compose -f infra/docker/docker-compose.yml down",
     "deploy:vps": "ansible-playbook -i infra/ansible/inventory.ini infra/ansible/deploy.yml",
-    "skills:install": "bash scripts/install-skills.sh"
+    "skills:install": "node scripts/install-skills.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.2",
