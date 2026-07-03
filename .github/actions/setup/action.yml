@@ -1,0 +1,29 @@
+name: Setup workspace
+description: Corepack + Node 22 (pnpm store cache) + frozen install; optionally generate the ZenStack client.
+
+inputs:
+  generate:
+    description: Run `pnpm db:generate` after install. Needed for typecheck/test; the build task generates the client itself.
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Enable corepack (pnpm@11 from packageManager field)
+      run: corepack enable
+      shell: bash
+
+    - name: Setup Node 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+      shell: bash
+
+    - name: Generate ZenStack client
+      if: inputs.generate == 'true'
+      run: pnpm db:generate
+      shell: bash

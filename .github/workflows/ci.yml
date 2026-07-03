@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 # Least privilege: this workflow only reads the repo (test/build/e2e). Override
-# per-job if a future job needs more (e.g. packages: write to push images).
+# per-job if a future job needs more (e.g. security-events: write to upload SARIF).
 permissions:
   contents: read
 
@@ -41,20 +41,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Enable corepack (pnpm@11 from packageManager field)
-        run: corepack enable
-
-      - name: Setup Node 22
-        uses: actions/setup-node@v4
+      # corepack + Node 22 (pnpm store cache) + frozen install + db:generate.
+      - name: Setup workspace
+        uses: ./.github/actions/setup
         with:
-          node-version: 22
-          cache: pnpm
+          generate: 'true'
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Generate ZenStack client
-        run: pnpm db:generate
+      # Persist Turbo's local task cache across runs so unchanged
+      # typecheck/test/build tasks are restored instead of recomputed. Parallel
+      # jobs don't share within a run (cache saves at job end) — the win is
+      # run-to-run. actions/cache failures are non-fatal (warn on self-hosted
+      # runners without a cache backend), so this never breaks the job.
+      - name: Turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-ci-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-ci-
+            turbo-${{ runner.os }}-
 
       - name: Typecheck
         run: pnpm typecheck
@@ -104,22 +109,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Enable corepack (pnpm@11 from packageManager field)
-        run: corepack enable
+      # No db:generate: the `build` step below runs it via Turbo's task graph.
+      - name: Setup workspace
+        uses: ./.github/actions/setup
 
-      - name: Setup Node 22
-        uses: actions/setup-node@v4
+      - name: Turbo cache
+        uses: actions/cache@v4
         with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+          path: .turbo
+          key: turbo-${{ runner.os }}-web-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-web-
+            turbo-${{ runner.os }}-
 
       # Builds everything (turbo runs db:generate first). The e2e boots the
       # backend from dist, so it must be built before Playwright starts it.
       - name: Build
         run: pnpm build
+
+      # Cache the browser binary so it isn't re-downloaded each run. `playwright
+      # install` skips the download when the binary is already present; only the
+      # (fast, mostly-preinstalled) apt deps still run. Key on the lockfile so a
+      # Playwright version bump busts it. Cache miss on self-hosted runners just
+      # re-downloads — safe.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
 
       - name: Install Playwright browser
         run: pnpm --filter @app/frontend exec playwright install --with-deps chromium
@@ -148,9 +166,30 @@ jobs:
 
   # Build the deployable images so a broken Dockerfile / base-image CVE is caught
   # in CI, not at deploy time. Images are built (not pushed) and scanned with Trivy.
+  # One matrix leg per image runs build + scan in parallel on its own runner.
   docker-images:
-    name: build + scan images (trivy)
+    name: build + scan ${{ matrix.name }} (trivy)
     runs-on: ubuntu-latest
+
+    # security-events: write lets Trivy findings land in the Security tab (SARIF
+    # upload), scoped to this job. A job-level permissions block replaces the
+    # top-level one wholesale, so contents: read is re-declared for checkout.
+    permissions:
+      contents: read
+      security-events: write
+
+    strategy:
+      # One image's build/scan failing must not cancel the other legs.
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            file: infra/docker/Dockerfile.backend
+          - name: frontend
+            file: infra/docker/Dockerfile.frontend
+            build-args: VITE_API_URL=http://localhost:3000
+          - name: telegram-bot
+            file: infra/docker/Dockerfile.bot
 
     steps:
       - name: Checkout
@@ -162,63 +201,48 @@ jobs:
       # No external build cache (cache-from/to) so this runs identically on
       # GitHub-hosted and container-based self-hosted runners; `load: true` puts
       # the image in the local daemon so Trivy can scan it.
-      - name: Build backend image
+      - name: Build ${{ matrix.name }} image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: infra/docker/Dockerfile.backend
+          file: ${{ matrix.file }}
           push: false
           load: true
-          tags: app-backend:ci
+          tags: app-${{ matrix.name }}:ci
+          build-args: ${{ matrix.build-args }}
 
-      - name: Build frontend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infra/docker/Dockerfile.frontend
-          push: false
-          load: true
-          tags: app-frontend:ci
-          build-args: |
-            VITE_API_URL=http://localhost:3000
-
-      - name: Build telegram-bot image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infra/docker/Dockerfile.bot
-          push: false
-          load: true
-          tags: app-telegram-bot:ci
-
-      # Advisory, non-gating (exit-code 0 + continue-on-error): surface HIGH/CRITICAL
-      # fixable CVEs in the logs without blocking merges on base-image drift.
-      - name: Scan backend image (Trivy)
+      # Advisory, non-gating (exit-code 0 + continue-on-error): print HIGH/CRITICAL
+      # fixable CVEs to the logs without blocking merges on base-image drift.
+      # Third-party action pinned to a full commit SHA (supply-chain hardening).
+      - name: Scan ${{ matrix.name }} image (Trivy · table)
         continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: app-backend:ci
+          image-ref: app-${{ matrix.name }}:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '0'
           format: table
 
-      - name: Scan frontend image (Trivy)
+      # Same scan as SARIF so findings are trackable in the Security tab over time,
+      # not just buried in logs. Non-gating.
+      - name: Scan ${{ matrix.name }} image (Trivy · SARIF)
         continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: app-frontend:ci
+          image-ref: app-${{ matrix.name }}:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '0'
-          format: table
+          format: sarif
+          output: trivy-${{ matrix.name }}.sarif
 
-      - name: Scan telegram-bot image (Trivy)
+      - name: Upload Trivy SARIF to code scanning
+        # Visibility convenience, never a gate. Also keeps the local Gitea harness
+        # green: Gitea (GHES) doesn't implement the code-scanning upload API.
+        if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          image-ref: app-telegram-bot:ci
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '0'
-          format: table
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
