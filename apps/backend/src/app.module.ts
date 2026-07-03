@@ -2,6 +2,7 @@ import { loadEnv } from '@app/config';
 import { createLoggerOptions } from '@app/observability';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module.js';
 import { JwtAuthGuard } from './auth/jwt-auth.guard.js';
@@ -27,6 +28,9 @@ import { UsersModule } from './users/users.module.js';
         };
       },
     }),
+    // Global rate limiting: 120 req/min/IP baseline; auth routes tighten this
+    // further with @Throttle (see AuthController).
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     ConfigModule,
     DatabaseModule,
     AuthModule,
@@ -34,6 +38,7 @@ import { UsersModule } from './users/users.module.js';
     HealthModule,
   ],
   providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],

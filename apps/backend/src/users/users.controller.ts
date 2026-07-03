@@ -1,5 +1,5 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
-import { ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator.js';
 import { ServiceTokenGuard } from '../auth/service-token.guard.js';
 import { UsersService } from './users.service.js';
@@ -14,6 +14,13 @@ export class UsersController {
   @UseGuards(ServiceTokenGuard)
   @ApiSecurity('service-token')
   @Get('count')
+  @ApiOkResponse({
+    schema: {
+      type: 'object',
+      properties: { count: { type: 'integer' } },
+      required: ['count'],
+    },
+  })
   async count(): Promise<{ count: number }> {
     return { count: await this.users.count() };
   }

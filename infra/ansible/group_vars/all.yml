@@ -9,6 +9,10 @@
 # --- Where and what to deploy ---------------------------------------------
 app_dir: /opt/app
 repo_url: "https://github.com/your-org/your-repo.git"
+# Deploy an immutable ref for reproducible releases: set this to a release tag or
+# commit SHA (e.g. v1.2.0) rather than a moving branch. Rollback = re-run the
+# playbook with repo_version set to the previous tag/SHA. `main` is a convenience
+# default for first-time / dev deploys only.
 repo_version: main
 compose_file: infra/docker/docker-compose.yml
 compose_profiles: [] # e.g. ["observability"] to also run OpenObserve

@@ -8,6 +8,8 @@ export interface ApiClientOptions {
   getAccessToken?: () => string | null | undefined;
   /** Send cookies (refresh token) with requests. Enable in the browser. */
   credentials?: RequestCredentials;
+  /** Abort a request after this many milliseconds so a hung backend can't stall the caller. */
+  timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -28,7 +30,10 @@ export class ApiClient {
 
   constructor(private readonly options: ApiClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
-    this.doFetch = options.fetchImpl ?? globalThis.fetch;
+    // Bind to globalThis: the browser's `fetch` must be invoked with `this === window`,
+    // otherwise calling it as `this.doFetch(...)` throws "Illegal invocation". (Node's
+    // undici fetch is lax about this, which is why it only surfaced in the browser.)
+    this.doFetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   login(input: LoginInput): Promise<Tokens> {
@@ -73,6 +78,9 @@ export class ApiClient {
       headers,
       credentials: this.options.credentials,
       body: body === undefined ? undefined : JSON.stringify(body),
+      // Bounded deadline: with grammY's sequential polling a single hung request
+      // would otherwise back-pressure every subsequent update.
+      signal: AbortSignal.timeout(this.options.timeoutMs ?? 10_000),
     });
 
     const text = await res.text();

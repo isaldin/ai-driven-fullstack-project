@@ -21,6 +21,10 @@
       "dependsOn": ["^build", "db:generate"],
       "cache": false
     },
+    "@app/frontend#test:e2e": {
+      "dependsOn": ["^build", "@app/backend#build"],
+      "cache": false
+    },
     "test:watch": {
       "dependsOn": ["db:generate"],
       "cache": false,

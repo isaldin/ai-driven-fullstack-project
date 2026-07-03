@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@app/api-client": "workspace:*",
@@ -23,11 +24,14 @@
   },
   "devDependencies": {
     "@app/tsconfig": "workspace:*",
+    "@playwright/test": "1.61.1",
     "@tailwindcss/vite": "4.3.2",
     "@types/node": "26.1.0",
+    "@types/pg": "8.20.0",
     "@vitejs/plugin-vue": "6.0.7",
     "@vue/test-utils": "2.4.11",
     "jsdom": "29.1.1",
+    "pg": "8.22.0",
     "tailwindcss": "4.3.2",
     "tailwindcss-primeui": "0.6.1",
     "typescript": "5.9.3",

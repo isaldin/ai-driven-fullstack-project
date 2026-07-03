@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
 
+# Least privilege: this workflow only reads the repo (test/build/e2e). Override
+# per-job if a future job needs more (e.g. packages: write to push images).
+permissions:
+  contents: read
+
 # Cancel superseded runs on the same ref.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -72,3 +77,148 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@${{ vars.E2E_DB_HOST || 'localhost' }}:5432/app_e2e
         run: pnpm --filter @app/backend test:e2e
+
+  # Frontend e2e: Playwright drives a real browser against the built stack
+  # (backend dist + Vite dev server) on dedicated ports, using an isolated
+  # `app_e2e_web` database that its globalSetup creates, pushes and seeds.
+  e2e-web:
+    name: frontend e2e (playwright)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable corepack (pnpm@11 from packageManager field)
+        run: corepack enable
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Builds everything (turbo runs db:generate first). The e2e boots the
+      # backend from dist, so it must be built before Playwright starts it.
+      - name: Build
+        run: pnpm build
+
+      - name: Install Playwright browser
+        run: pnpm --filter @app/frontend exec playwright install --with-deps chromium
+
+      - name: Frontend e2e tests
+        # Host caveat (same as backend e2e): `localhost` on GitHub-hosted runners,
+        # `postgres` on container-based self-hosted runners (set E2E_DB_HOST=postgres).
+        # PW_CHROMIUM_NO_SANDBOX: leave unset on GitHub-hosted (non-root, sandbox works);
+        # set it to 1 on rootful container runners or Chromium refuses to launch.
+        env:
+          CI: 'true'
+          E2E_DB_HOST: ${{ vars.E2E_DB_HOST || 'localhost' }}
+          PW_CHROMIUM_NO_SANDBOX: ${{ vars.PW_CHROMIUM_NO_SANDBOX || '' }}
+        run: pnpm --filter @app/frontend test:e2e
+
+      - name: Upload Playwright report
+        # A debugging convenience, not a gate — never fail CI over it. Also lets the
+        # local Gitea harness stay green: Gitea (GHES) doesn't support the v4 artifact API.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/frontend/playwright-report/
+          retention-days: 7
+
+  # Build the deployable images so a broken Dockerfile / base-image CVE is caught
+  # in CI, not at deploy time. Images are built (not pushed) and scanned with Trivy.
+  docker-images:
+    name: build + scan images (trivy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # No external build cache (cache-from/to) so this runs identically on
+      # GitHub-hosted and container-based self-hosted runners; `load: true` puts
+      # the image in the local daemon so Trivy can scan it.
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: false
+          load: true
+          tags: app-backend:ci
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.frontend
+          push: false
+          load: true
+          tags: app-frontend:ci
+          build-args: |
+            VITE_API_URL=http://localhost:3000
+
+      - name: Build telegram-bot image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.bot
+          push: false
+          load: true
+          tags: app-telegram-bot:ci
+
+      # Advisory, non-gating (exit-code 0 + continue-on-error): surface HIGH/CRITICAL
+      # fixable CVEs in the logs without blocking merges on base-image drift.
+      - name: Scan backend image (Trivy)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: app-backend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          format: table
+
+      - name: Scan frontend image (Trivy)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: app-frontend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          format: table
+
+      - name: Scan telegram-bot image (Trivy)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: app-telegram-bot:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          format: table

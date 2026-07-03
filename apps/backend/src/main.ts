@@ -4,6 +4,7 @@ import { startOtel, stopOtel } from '@app/observability';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module.js';
 
@@ -20,6 +21,9 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
   app.use(cookieParser());
+  // Security headers. CSP is disabled so Swagger UI at /docs keeps working; a JSON
+  // API serves no HTML page that needs a document CSP.
+  app.use(helmet({ contentSecurityPolicy: false }));
   app.enableCors({ origin: env.CORS_ORIGIN, credentials: true });
   app.enableShutdownHooks();
 

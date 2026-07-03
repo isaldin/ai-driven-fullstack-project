@@ -104,6 +104,19 @@
         chdir: "{{ app_dir }}"
       changed_when: true
 
+    # --- Post-deploy verification -----------------------------------------
+    # A container that boots then crash-loops (bad migration/secret) would
+    # otherwise be reported as a successful deploy. Gate on real readiness.
+    - name: Wait for the backend to report ready
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ backend_port }}/health/ready"
+        status_code: 200
+      register: backend_ready
+      retries: 20
+      delay: 6
+      until: backend_ready.status == 200
+      changed_when: false
+
     # --- Housekeeping -----------------------------------------------------
     - name: Prune dangling images to reclaim disk
       ansible.builtin.command: docker image prune -f

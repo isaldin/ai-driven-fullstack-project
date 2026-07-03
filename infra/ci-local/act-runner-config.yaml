@@ -1,0 +1,14 @@
+# act_runner config. `ubuntu-latest` maps to a catthehacker image (the same family
+# `nektos/act` uses) — Node, apt, sudo, and the tooling GitHub Actions expects.
+runner:
+  labels:
+    - 'ubuntu-latest:docker://catthehacker/ubuntu:act-latest'
+    - 'ubuntu-22.04:docker://catthehacker/ubuntu:act-22.04'
+  capacity: 1
+  timeout: 30m
+
+container:
+  # Join the Gitea compose network so job containers can clone from `gitea:3000`
+  # and reach workflow `services:` (Postgres) by name.
+  network: ci-local_ci
+  force_pull: false

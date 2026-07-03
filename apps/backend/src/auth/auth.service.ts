@@ -58,10 +58,14 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    await this.db.client.refreshToken.update({
-      where: { id: record.id },
+    // Revoke conditionally and gate on the affected count so two concurrent requests
+    // bearing the same refresh token cannot both pass the check above and both mint a
+    // new pair (rotation double-spend / TOCTOU). The loser matches 0 rows -> reject.
+    const revoked = await this.db.client.refreshToken.updateMany({
+      where: { id: record.id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    if (revoked.count !== 1) throw new UnauthorizedException('Invalid refresh token');
 
     const user = await this.db.client.user.findUnique({ where: { id: record.userId } });
     if (!user) throw new UnauthorizedException('Invalid refresh token');

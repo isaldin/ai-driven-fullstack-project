@@ -18,8 +18,11 @@ async function onLogout(): Promise<void> {
   loggingOut.value = true;
   try {
     await auth.logout();
-    await router.push({ name: 'login' });
+  } catch {
+    // auth.logout() clears the local session in its own finally; a failed
+    // server-side logout must not strand the user on this protected page.
   } finally {
+    await router.push({ name: 'login' });
     loggingOut.value = false;
   }
 }

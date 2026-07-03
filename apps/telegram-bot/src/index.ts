@@ -2,10 +2,9 @@ import { ApiClient } from '@app/api-client';
 import { loadEnv } from '@app/config';
 import { createLogger, startOtel, stopOtel } from '@app/observability';
 import { RedisAdapter } from '@grammyjs/storage-redis';
-import { session } from 'grammy';
 import { Redis } from 'ioredis';
 import { createBot } from './bot.js';
-import { type BotContext, initialSession, type SessionData } from './context.js';
+import type { SessionData } from './context.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -39,14 +38,12 @@ async function main(): Promise<void> {
     serviceToken: env.SERVICE_API_TOKEN,
   });
 
-  const bot = createBot({ token: env.TELEGRAM_BOT_TOKEN, api, logger });
-
-  bot.use(
-    session<SessionData, BotContext>({
-      initial: initialSession,
-      storage: new RedisAdapter<SessionData>({ instance: redis }),
-    }),
-  );
+  const bot = createBot({
+    token: env.TELEGRAM_BOT_TOKEN,
+    api,
+    logger,
+    sessionStorage: new RedisAdapter<SessionData>({ instance: redis }),
+  });
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {

@@ -48,6 +48,8 @@ async function onSubmit(): Promise<void> {
               autocomplete="email"
               required
               fluid
+              :aria-invalid="errorMessage ? 'true' : undefined"
+              :aria-describedby="errorMessage ? 'login-error' : undefined"
             />
           </div>
           <div class="flex flex-col gap-2">
@@ -58,10 +60,22 @@ async function onSubmit(): Promise<void> {
               :feedback="false"
               toggle-mask
               fluid
-              :input-props="{ autocomplete: 'current-password', required: true }"
+              :input-props="{
+                autocomplete: 'current-password',
+                required: true,
+                'aria-invalid': errorMessage ? 'true' : undefined,
+                'aria-describedby': errorMessage ? 'login-error' : undefined,
+              }"
             />
           </div>
-          <small v-if="errorMessage" class="text-red-500">{{ errorMessage }}</small>
+          <small
+            v-if="errorMessage"
+            id="login-error"
+            role="alert"
+            aria-live="assertive"
+            class="text-red-500"
+            >{{ errorMessage }}</small
+          >
           <Button type="submit" label="Sign in" :loading="submitting" fluid />
         </form>
       </template>

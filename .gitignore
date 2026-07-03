@@ -28,6 +28,12 @@ coverage/
 apps/frontend/dist/
 apps/frontend/.vite/
 
+# playwright e2e
+apps/frontend/test-results/
+apps/frontend/playwright-report/
+apps/frontend/blob-report/
+apps/frontend/playwright/.cache/
+
 # os / editor
 .DS_Store
 .idea/
@@ -37,3 +43,6 @@ apps/frontend/.vite/
 # ansible secrets (decrypted vault must never be committed)
 infra/ansible/vault.yml
 infra/ansible/group_vars/all/vault.yml
+
+# local CI harness (Gitea access token minted at runtime)
+infra/ci-local/.token

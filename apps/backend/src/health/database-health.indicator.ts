@@ -1,9 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { type HealthIndicatorResult, HealthIndicatorService } from '@nestjs/terminus';
 import { DatabaseService } from '../database/database.service.js';
 
 @Injectable()
 export class DatabaseHealthIndicator {
+  private readonly logger = new Logger(DatabaseHealthIndicator.name);
+
   constructor(
     private readonly health: HealthIndicatorService,
     private readonly db: DatabaseService,
@@ -15,7 +17,12 @@ export class DatabaseHealthIndicator {
       await this.db.ping();
       return indicator.up();
     } catch (error) {
-      return indicator.down({ message: (error as Error).message });
+      // `/health/ready` is public: log the real cause server-side, but return a
+      // static message so a raw `pg` error (host/port, ECONNREFUSED) isn't leaked.
+      this.logger.error(
+        `Database readiness probe failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return indicator.down({ message: 'database unreachable' });
     }
   }
 }

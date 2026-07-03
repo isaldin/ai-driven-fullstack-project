@@ -57,6 +57,7 @@ pnpm lint               # biome check
 pnpm format             # biome format --write
 pnpm test               # unit tests (all workspaces)
 pnpm --filter @app/backend test:e2e   # backend e2e (needs a Postgres; auto-creates & pushes the schema)
+pnpm --filter @app/frontend test:e2e  # frontend Playwright e2e (needs a Postgres + a prior `pnpm build`)
 pnpm db:migrate:dev     # create+apply a dev migration
 pnpm db:seed            # seed an admin user (admin@example.com / admin12345)
 pnpm docker:up          # start local postgres + redis
@@ -82,6 +83,15 @@ Copy `.env.example` to `.env` first.
 - **ESM discipline**: relative imports use explicit `.js` extensions (NodeNext). Backend/bot build with
   `tsc` (emits decorator metadata); tests use Vitest + `unplugin-swc`.
 - Env is validated by `@app/config` (Zod) and fails fast. Add new vars there and in `.env.example`.
+- **Local `.env` loading.** `@app/config` is a pure validator — it reads `process.env`, it does not read a
+  file. The single repo-root `.env` is injected at the script layer for local dev: node entrypoints use
+  Node's native `--env-file-if-exists=../../.env` (backend/bot `dev`+`start`, `db:seed`); the `zen`/Prisma
+  dev commands (`db:migrate:dev`, `db:push`) go through `scripts/with-env.mjs` (find-up `.env` →
+  `process.loadEnvFile`, non-override) because `.bin/zen` is a shell shim that can't take the flag; the
+  frontend sets Vite `envDir` to the repo root (only `VITE_`-prefixed vars are exposed — no secret leak).
+  All of these are no-ops in containers/CI where env is provided directly and no `.env` exists, so don't
+  drop them — without them `pnpm dev` / `db:migrate:dev` fail with "Invalid environment configuration".
+  `db:migrate` (deploy) stays flag-free: it only runs in the prod container, which supplies env via compose.
 
 ## Data layer / migrations
 
@@ -94,6 +104,31 @@ Copy `.env.example` to `.env` first.
 - Vitest across the repo. Backend unit tests are `src/**/*.spec.ts`; e2e is `test/**/*.e2e-spec.ts`
   and runs the real Nest app against a real Postgres (a dedicated `app_e2e` DB it creates and pushes).
 - Policy/e2e tests must run against a real Postgres, not mocks.
+- **Frontend e2e** is Playwright (`apps/frontend/e2e/*.spec.ts`, config `apps/frontend/playwright.config.ts`).
+  It boots the real backend (built dist) on port **3100** and the Vite dev server on **5273** (dedicated
+  ports so it never collides with `pnpm dev`), pointing the frontend at the e2e backend via
+  `VITE_API_URL` (Vite reads `VITE_`-prefixed vars from `process.env`, which win over `.env`). `globalSetup`
+  creates/pushes/seeds an isolated `app_e2e_web` DB. The backend webServer gates on `/health/live` (not
+  `/health/ready`) because readiness pings the DB, which only exists after globalSetup runs. Prereqs: a
+  reachable Postgres, `pnpm build` (backend runs from dist — turbo's `@app/frontend#test:e2e` depends on
+  `@app/backend#build`), and a browser (`pnpm --filter @app/frontend exec playwright install chromium`).
+  CI runs it as the `e2e-web` job; same `E2E_DB_HOST` runner caveat as the backend e2e.
+
+## Verifying CI changes (required)
+
+**Any change to `.github/workflows/ci.yml` — or to the scripts/config/turbo tasks it invokes —
+must be verified on a real GitHub-Actions-compatible runner before it's considered done.** Local
+`pnpm` runs do not catch runner-only failures (service-container networking, rootful Chromium,
+env resolution, image/tooling gaps). Use the committed harness:
+
+```bash
+infra/ci-local/ci-local.sh up    # one-time-ish: start Gitea + act_runner (persists in volumes)
+infra/ci-local/ci-local.sh run   # push a working-tree snapshot -> run the workflow -> wait for the result
+```
+
+It runs the actual workflow on self-hosted Gitea + act_runner. See `infra/ci-local/README.md`. Two
+repo Actions variables it sets are what container-based runners need but GitHub-hosted don't:
+`E2E_DB_HOST=postgres` (services reached by name) and `PW_CHROMIUM_NO_SANDBOX=1` (jobs run as root).
 
 ## Deploy & CI — operational invariants (verified; easy to break)
 
@@ -129,6 +164,10 @@ New-project fill-in steps (remote, vault secrets, bot token): see [`docs/QUICKST
 
 ## Skills
 
-Run `pnpm skills:install` (or `bash scripts/install-skills.sh`) to install the agent skills for this
+Run `pnpm skills:install` (or `node scripts/install-skills.mjs`) to install the agent skills for this
 stack (ZenStack v3, NestJS, Node backend, Telegram bot, DevOps/Ansible, architecture). See the script
-for the exact list.
+for the exact list. Skills download once into the canonical `.agents/skills/` store (read directly by the
+`.agents`-convention agents — Codex, Gemini CLI, etc.) and are mirrored into `.claude/skills/` as relative
+symlinks for Claude Code, so no content is duplicated. The installer is non-interactive (`-y`, CI-safe)
+and idempotent — a skill already in `.agents/skills/` is not re-downloaded (delete it or `npx skills
+update` to refresh).

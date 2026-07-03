@@ -1,0 +1,56 @@
+# Local CI verification harness — a self-hosted Gitea + act_runner that runs the
+# real .github/workflows/ci.yml, GitHub-Actions-compatible. Optional dev tooling;
+# NOT part of the deployed stack. Data lives in named volumes so `down`/`up` keeps
+# the Gitea instance + runner registration (subsequent runs skip setup & image pulls).
+#
+# Usage: infra/ci-local/ci-local.sh {up|run|status|logs|down|reset}
+name: ci-local
+
+services:
+  gitea:
+    image: gitea/gitea:1.22
+    environment:
+      USER_UID: '1000'
+      USER_GID: '1000'
+      GITEA__server__ROOT_URL: http://gitea:3000/
+      GITEA__server__HTTP_PORT: '3000'
+      GITEA__actions__ENABLED: 'true'
+      GITEA__security__INSTALL_LOCK: 'true'
+      GITEA__service__DISABLE_REGISTRATION: 'true'
+    volumes:
+      - gitea_data:/data
+    ports:
+      - '3010:3000'
+    networks:
+      - ci
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:3000/api/healthz']
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  runner:
+    image: gitea/act_runner:latest
+    depends_on:
+      gitea:
+        condition: service_healthy
+    environment:
+      GITEA_INSTANCE_URL: http://gitea:3000
+      # Injected by ci-local.sh on first registration; ignored once /data/.runner exists.
+      GITEA_RUNNER_REGISTRATION_TOKEN: ${GITEA_RUNNER_REGISTRATION_TOKEN:-}
+      CONFIG_FILE: /config.yaml
+    volumes:
+      - runner_data:/data
+      - ./act-runner-config.yaml:/config.yaml:ro
+      # Docker-out-of-Docker: the runner spawns sibling job containers on the host
+      # daemon (DinD fails on Docker Desktop's double-NAT egress).
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - ci
+
+volumes:
+  gitea_data:
+  runner_data:
+
+networks:
+  ci:

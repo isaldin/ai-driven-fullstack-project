@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "start": "node dist/index.js",
-    "dev": "node --watch --import @swc-node/register/esm-register src/index.ts"
+    "start": "node --env-file-if-exists=../../.env dist/index.js",
+    "dev": "node --env-file-if-exists=../../.env --watch --import @swc-node/register/esm-register src/index.ts"
   },
   "dependencies": {
     "@app/api-client": "workspace:*",

@@ -1,13 +1,15 @@
 import { type ApiClient, ApiError } from '@app/api-client';
 import type { Logger } from '@app/observability';
-import { Bot } from 'grammy';
-import type { BotContext } from './context.js';
+import { Bot, type StorageAdapter, session } from 'grammy';
+import { type BotContext, initialSession, type SessionData } from './context.js';
 
 /** Everything the bot needs, injected so the factory stays unit-testable. */
 export interface CreateBotDeps {
   token: string;
   api: ApiClient;
   logger: Logger;
+  /** Session store. Omit to use grammY's in-memory store (handy in tests). */
+  sessionStorage?: StorageAdapter<SessionData>;
 }
 
 /** Welcome text shown by the /start command. */
@@ -60,13 +62,24 @@ export async function buildStatsReply(api: ApiClient, logger: Logger): Promise<s
 }
 
 /**
- * Builds a fully configured (but not yet started) bot. Registers command
- * handlers and a global error handler. Deliberately does NOT register the
- * session middleware so this factory can be exercised without Redis.
+ * Builds a fully configured (but not yet started) bot: the session middleware,
+ * the command handlers and a global error handler. The session middleware is
+ * registered FIRST so `ctx.session` is defined inside every handler (grammY runs
+ * middleware in registration order).
  */
 export function createBot(deps: CreateBotDeps): Bot<BotContext> {
-  const { token, api, logger } = deps;
+  const { token, api, logger, sessionStorage } = deps;
   const bot = new Bot<BotContext>(token);
+
+  // Must precede any handler that reads ctx.session. With no storage grammY uses
+  // its in-memory store (fine for tests); production injects the Redis store.
+  bot.use(session<SessionData, BotContext>({ initial: initialSession, storage: sessionStorage }));
+
+  // Count the commands each chat issues — exercises the persistent session.
+  bot.use(async (ctx, next) => {
+    if (ctx.message?.text?.startsWith('/')) ctx.session.commandCount += 1;
+    await next();
+  });
 
   bot.command('start', (ctx) => ctx.reply(WELCOME_MESSAGE));
 
