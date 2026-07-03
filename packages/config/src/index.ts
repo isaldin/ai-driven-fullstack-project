@@ -37,6 +37,7 @@ export const envSchema = z.object({
   // Observability
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   OTEL_SERVICE_NAME: z.string().default('app'),
+  SERVICE_VERSION: z.string().default('0.0.0'),
   OTEL_SDK_DISABLED: envBool(false),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().default(''),
   OTEL_EXPORTER_OTLP_HEADERS: z.string().default(''),

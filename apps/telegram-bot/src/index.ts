@@ -23,8 +23,11 @@ async function main(): Promise<void> {
 
   startOtel({
     serviceName: env.OTEL_SERVICE_NAME,
+    serviceVersion: env.SERVICE_VERSION,
+    environment: env.NODE_ENV,
     otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
     otlpHeaders: env.OTEL_EXPORTER_OTLP_HEADERS,
+    metricsExporter: env.METRICS_EXPORTER,
     disabled: env.OTEL_SDK_DISABLED,
   });
 
