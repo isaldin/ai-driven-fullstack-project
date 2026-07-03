@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ApiError } from '@app/api-client';
 import Button from 'primevue/button';
 import Card from 'primevue/card';
 import InputText from 'primevue/inputtext';
 import Password from 'primevue/password';
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { describeError } from '../lib/api';
 import { useAuthStore } from '../stores/auth';
 
 const router = useRouter();
@@ -23,8 +23,7 @@ async function onSubmit(): Promise<void> {
     await auth.login(email.value, password.value);
     await router.push({ name: 'dashboard' });
   } catch (error) {
-    errorMessage.value =
-      error instanceof ApiError ? error.message : 'Unable to sign in. Please try again.';
+    errorMessage.value = describeError(error, 'Unable to sign in. Please try again.');
   } finally {
     submitting.value = false;
   }
@@ -48,6 +47,7 @@ async function onSubmit(): Promise<void> {
               autocomplete="email"
               required
               fluid
+              :disabled="submitting"
               :aria-invalid="errorMessage ? 'true' : undefined"
               :aria-describedby="errorMessage ? 'login-error' : undefined"
             />
@@ -60,6 +60,7 @@ async function onSubmit(): Promise<void> {
               :feedback="false"
               toggle-mask
               fluid
+              :disabled="submitting"
               :input-props="{
                 autocomplete: 'current-password',
                 required: true,

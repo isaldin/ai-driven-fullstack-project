@@ -1,4 +1,4 @@
-import { ApiClient } from '@app/api-client';
+import { ApiClient, ApiError } from '@app/api-client';
 
 /**
  * Module-level access-token holder. The auth store registers a getter that reads
@@ -18,3 +18,20 @@ export const api = new ApiClient({
   credentials: 'include',
   getAccessToken: () => accessTokenGetter(),
 });
+
+/**
+ * Map any error the client can throw to a user-facing message. The client
+ * normalizes transport failures to `ApiError` (status 0 = network, 408 = timeout),
+ * so this covers those distinctly and passes through backend messages otherwise.
+ */
+export function describeError(
+  error: unknown,
+  fallback = 'Something went wrong. Please try again.',
+): string {
+  if (error instanceof ApiError) {
+    if (error.status === 0) return 'Network error — check your connection and try again.';
+    if (error.status === 408) return 'The request timed out. Please try again.';
+    return error.message;
+  }
+  return fallback;
+}

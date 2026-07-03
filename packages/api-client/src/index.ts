@@ -73,15 +73,26 @@ export class ApiClient {
     if (bearer) headers.authorization = `Bearer ${bearer}`;
     if (this.options.serviceToken) headers['x-service-token'] = this.options.serviceToken;
 
-    const res = await this.doFetch(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-      credentials: this.options.credentials,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      // Bounded deadline: with grammY's sequential polling a single hung request
-      // would otherwise back-pressure every subsequent update.
-      signal: AbortSignal.timeout(this.options.timeoutMs ?? 10_000),
-    });
+    let res: Response;
+    try {
+      res = await this.doFetch(`${this.baseUrl}${path}`, {
+        method,
+        headers,
+        credentials: this.options.credentials,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        // Bounded deadline: with grammY's sequential polling a single hung request
+        // would otherwise back-pressure every subsequent update.
+        signal: AbortSignal.timeout(this.options.timeoutMs ?? 10_000),
+      });
+    } catch (err) {
+      // Normalize transport failures into ApiError so callers only ever handle one
+      // error type. status 408 = timed out (AbortSignal.timeout), status 0 = the
+      // request never completed (offline / DNS / connection refused).
+      if (err instanceof DOMException && err.name === 'TimeoutError') {
+        throw new ApiError(408, 'The request timed out. Please try again.');
+      }
+      throw new ApiError(0, 'Network request failed. Please check your connection.');
+    }
 
     const text = await res.text();
     const data = text ? JSON.parse(text) : undefined;
