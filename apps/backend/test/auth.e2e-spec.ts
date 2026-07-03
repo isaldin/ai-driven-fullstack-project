@@ -1,9 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AppModule } from '../src/app.module.js';
+import { createTestApp } from './create-app.js';
 
 describe('Auth flow (e2e)', () => {
   let app: INestApplication;
@@ -13,10 +11,7 @@ describe('Auth flow (e2e)', () => {
   let cookies: string[] = [];
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication({ bufferLogs: false });
-    app.use(cookieParser());
-    await app.init();
+    app = await createTestApp();
   });
 
   afterAll(async () => {

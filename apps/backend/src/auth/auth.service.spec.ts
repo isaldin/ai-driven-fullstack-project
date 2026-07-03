@@ -80,4 +80,115 @@ describe('AuthService', () => {
     });
     await expect(service.validateUser('a@b.com', 'wrong')).rejects.toThrow(/invalid credentials/i);
   });
+
+  it('rotates a valid refresh token', async () => {
+    const { service, db } = setup();
+    const secret = 'refresh-secret';
+    const tokenHash = await argon2.hash(secret);
+    db.client.refreshToken.findUnique.mockResolvedValue({
+      id: 'rt1',
+      userId: 'u1',
+      tokenHash,
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    db.client.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+    db.client.refreshToken.create.mockResolvedValue({ id: 'rt2' });
+    db.client.user.findUnique.mockResolvedValue({ id: 'u1', email: 'a@b.com', role: 'USER' });
+
+    const tokens = await service.refresh(`rt1.${secret}`);
+
+    expect(tokens.accessToken).toBe('access-token');
+    expect(tokens.refreshToken).toMatch(/^rt2\./);
+    expect(db.client.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { id: 'rt1', revokedAt: null },
+      data: expect.objectContaining({ revokedAt: expect.any(Date) }),
+    });
+  });
+
+  it('rejects a refresh token the count guard could not exclusively revoke (TOCTOU)', async () => {
+    const { service, db } = setup();
+    const secret = 'refresh-secret';
+    const tokenHash = await argon2.hash(secret);
+    db.client.refreshToken.findUnique.mockResolvedValue({
+      id: 'rt1',
+      userId: 'u1',
+      tokenHash,
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    db.client.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.refresh(`rt1.${secret}`)).rejects.toThrow(/invalid refresh token/i);
+  });
+
+  it('rejects a missing refresh token', async () => {
+    const { service } = setup();
+    await expect(service.refresh(undefined)).rejects.toThrow(/missing refresh token/i);
+  });
+
+  it('rejects an already-revoked refresh token', async () => {
+    const { service, db } = setup();
+    const secret = 'refresh-secret';
+    const tokenHash = await argon2.hash(secret);
+    db.client.refreshToken.findUnique.mockResolvedValue({
+      id: 'rt1',
+      userId: 'u1',
+      tokenHash,
+      revokedAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    await expect(service.refresh(`rt1.${secret}`)).rejects.toThrow(/invalid refresh token/i);
+  });
+
+  it('rejects an expired refresh token', async () => {
+    const { service, db } = setup();
+    const secret = 'refresh-secret';
+    const tokenHash = await argon2.hash(secret);
+    db.client.refreshToken.findUnique.mockResolvedValue({
+      id: 'rt1',
+      userId: 'u1',
+      tokenHash,
+      revokedAt: null,
+      expiresAt: new Date(Date.now() - 1000),
+    });
+
+    await expect(service.refresh(`rt1.${secret}`)).rejects.toThrow(/invalid refresh token/i);
+  });
+
+  it('revokes the refresh token on logout, idempotently', async () => {
+    const { service, db } = setup();
+    db.client.refreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.logout('rt1.some-secret');
+    expect(db.client.refreshToken.updateMany).toHaveBeenCalledWith({
+      where: { id: 'rt1', revokedAt: null },
+      data: expect.objectContaining({ revokedAt: expect.any(Date) }),
+    });
+
+    // A missing cookie is a silent no-op — no throw, no db write.
+    db.client.refreshToken.updateMany.mockClear();
+    await service.logout(undefined);
+    expect(db.client.refreshToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('returns the current user without leaking the hash, and 401s when missing', async () => {
+    const { service, db } = setup();
+    db.client.user.findUnique.mockResolvedValueOnce({
+      id: 'u1',
+      email: 'a@b.com',
+      name: 'A',
+      role: 'USER',
+      createdAt: new Date('2026-07-02T00:00:00Z'),
+      passwordHash: 'secret-hash',
+    });
+
+    const dto = await service.me('u1');
+    expect(dto).toMatchObject({ id: 'u1', email: 'a@b.com', role: 'USER' });
+    expect((dto as Record<string, unknown>).passwordHash).toBeUndefined();
+
+    db.client.user.findUnique.mockResolvedValueOnce(null);
+    await expect(service.me('missing')).rejects.toThrow(/user not found/i);
+  });
 });
