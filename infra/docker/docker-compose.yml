@@ -1,17 +1,22 @@
 # ─────────────────────────────────────────────────────────────
 # Full-stack deployment for the AI-ready monorepo template.
 #
-# Run from the repo root. Pass the root .env EXPLICITLY with --env-file: Compose
-# resolves ${VAR} interpolation (published ports, `environment:` secrets, the
-# frontend VITE_API_URL build arg) from the compose file's own directory
-# (infra/docker/), NOT the repo root — so a bare `-f infra/docker/...` does NOT
-# read ./.env and silently uses the `change-me` defaults below:
-#   docker compose --env-file .env -f infra/docker/docker-compose.yml up -d --build
+# Run from the repo root. Two modes, and they differ on --env-file:
 #
-# With no .env it still parses/runs on the inline defaults (fine for a throwaway
-# local spin, NOT production). The `observability` profile (OpenObserve — OTLP
-# metrics/traces/logs backend) is OFF by default:
-#   docker compose --env-file .env -f infra/docker/docker-compose.yml --profile observability up -d
+#   LOCAL (throwaway) — NO --env-file. The inline defaults below wire services by in-network name
+#   (postgres/redis/otel-collector) and use `change-me` secrets — what a local spin wants. The repo-root
+#   .env/.env.example is HOST-oriented (DATABASE_URL=…@localhost, for `pnpm dev`); passing it here with
+#   --env-file overrides the in-network hosts and the backend crash-loops looking for Postgres at
+#   localhost inside its own container. Enable observability via a shell var:
+#     docker compose -f infra/docker/docker-compose.yml up -d --build
+#     OTEL_SDK_DISABLED=false docker compose -f infra/docker/docker-compose.yml --profile observability up -d
+#
+#   PRODUCTION — Ansible renders a CONTAINER-oriented .env (service-name hosts + real vault secrets) and
+#   passes --env-file, so ${VAR} interpolation (published ports, `environment:` secrets, the frontend
+#   VITE_API_URL build arg) resolves from that file (NOT the repo root automatically). Never deploy
+#   without it or you ship the `change-me` defaults below. Use `pnpm deploy:vps`, don't hand-run compose
+#   against a public host. The `observability` profile (OpenTelemetry Collector + OpenObserve — the OTLP
+#   metrics/traces/logs backend) is OFF by default; add `--profile observability`.
 #
 # Build context is the repo root (../..); Dockerfiles live under infra/docker/.
 #
@@ -102,7 +107,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-app-backend}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://openobserve:5080/api/default}
+      # Keep verbose per-middleware Express spans off by default (one HTTP span per request).
+      OTEL_VERBOSE_SPANS: ${OTEL_VERBOSE_SPANS:-false}
+      # Traces + metrics go to the collector (no OpenObserve credentials in the app).
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       METRICS_EXPORTER: ${METRICS_EXPORTER:-otlp}
       SENTRY_DSN: ${SENTRY_DSN:-}
@@ -170,7 +178,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-app-telegram-bot}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://openobserve:5080/api/default}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
     depends_on:
       backend:
         condition: service_healthy
@@ -197,16 +205,43 @@ services:
       - openobserve_data:/data
     ports:
       - "${OPENOBSERVE_PORT:-5080}:5080"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5080/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+    # No healthcheck: the OpenObserve image is distroless (no shell/curl/wget), so an
+    # in-container HTTP probe can't run. Consumers (the collector) tolerate it not being
+    # ready yet by retrying their exports.
     deploy:
       resources:
         limits:
           memory: 512m
+          cpus: "0.5"
+
+  # ---- OpenTelemetry Collector (single OTLP egress + log tailer) ------------
+  # Receives traces/metrics from the app over OTLP, tails container stdout for logs
+  # (promoting trace_id/span_id so logs correlate with traces in OpenObserve), and
+  # forwards all three to OpenObserve. Only started with the `observability` profile.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    # Root so the filelog receiver can read the (root-owned) Docker container logs.
+    user: "0:0"
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      # base64("<ZO_ROOT_USER_EMAIL>:<ZO_ROOT_USER_PASSWORD>") — regenerate if you change
+      # the OpenObserve root credentials above.
+      OPENOBSERVE_AUTH_HEADER: ${OPENOBSERVE_AUTH_HEADER:-Basic YWRtaW5AZXhhbXBsZS5jb206Q2hhbmdlTWUxMjMh}
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      # Read-only access to container stdout logs for the filelog receiver.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    ports:
+      - "${OTEL_COLLECTOR_PORT:-4318}:4318"
+    depends_on:
+      openobserve:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 256m
           cpus: "0.5"
 
 volumes:

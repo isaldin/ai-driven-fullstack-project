@@ -18,6 +18,7 @@ async function bootstrap(): Promise<void> {
     otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
     otlpHeaders: env.OTEL_EXPORTER_OTLP_HEADERS,
     metricsExporter: env.METRICS_EXPORTER,
+    verboseSpans: env.OTEL_VERBOSE_SPANS,
     disabled: env.OTEL_SDK_DISABLED,
   });
 

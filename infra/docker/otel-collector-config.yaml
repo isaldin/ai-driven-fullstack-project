@@ -1,0 +1,122 @@
+# OpenTelemetry Collector — the single telemetry egress for the `observability` profile.
+#
+#   - otlp receiver   : traces + metrics pushed by the backend/bot (they target the
+#                       collector, so the app holds no OpenObserve credentials).
+#   - filelog receiver: tails container stdout, parses each Pino JSON line and promotes
+#                       trace_id/span_id/trace_flags onto the log record's trace context.
+#                       This is what makes log<->trace correlation work in OpenObserve:
+#                       the app only writes JSON to stdout; the collector attaches the
+#                       trace context on the way in.
+#
+# All three signals are exported to OpenObserve over OTLP/HTTP.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        # Browser (RUM) tracing posts OTLP straight here from the app origin, which is
+        # cross-origin — allow it. localhost:5173/4173 are the Vite dev/preview servers;
+        # localhost:8080 is the containerized frontend (nginx). Add your PUBLIC prod frontend
+        # origin here when you run browser tracing in prod.
+        cors:
+          allowed_origins:
+            - http://localhost:5173
+            - http://localhost:4173
+            - http://localhost:8080
+          allowed_headers:
+            - "*"
+
+  filelog:
+    include:
+      - /var/lib/docker/containers/*/*-json.log
+    include_file_path: true
+    operators:
+      # 1. Parse the Docker json-file envelope {"log","stream","time"} and promote the
+      #    real stdout line (attributes.log) to the body. Done with json_parser rather
+      #    than the `container` operator, which insists on the k8s /var/log/pods path.
+      - type: json_parser
+        id: docker-envelope
+        parse_from: body
+        parse_to: attributes
+        on_error: send_quiet
+      - type: move
+        from: attributes.log
+        to: body
+        on_error: send_quiet
+      # 2. Parse the Pino JSON into attributes and lift trace context / severity /
+      #    timestamp. Non-JSON lines (postgres, redis, OpenObserve itself) hit on_error
+      #    and pass through untouched.
+      - type: json_parser
+        parse_from: body
+        parse_to: attributes
+        on_error: send_quiet
+        timestamp:
+          parse_from: attributes.time
+          layout_type: epoch
+          layout: ms
+        severity:
+          parse_from: attributes.level
+          mapping:
+            trace: 10
+            debug: 20
+            info: 30
+            warn: 40
+            error: 50
+            fatal: 60
+        trace:
+          trace_id:
+            parse_from: attributes.trace_id
+          span_id:
+            parse_from: attributes.span_id
+          trace_flags:
+            parse_from: attributes.trace_flags
+      # 2b. Drop non-Pino container logs (postgres, redis, OpenObserve, the collector
+      #     itself): they never got a `name` field. This focuses OpenObserve on the app's
+      #     structured logs and breaks the loop of the collector re-ingesting OpenObserve's
+      #     own ingest logs. Remove this operator to collect every container's logs.
+      - type: filter
+        expr: '"name" not in attributes'
+      # 3. Use the Pino message as the human-readable log body when present.
+      - type: move
+        from: attributes.msg
+        to: body
+        on_error: send_quiet
+      # 4. Attribute the log to its service (Pino `name`) so it's filterable in
+      #    OpenObserve. Non-Pino lines have no `name` and stay unattributed.
+      - type: move
+        from: attributes.name
+        to: resource["service.name"]
+        on_error: send_quiet
+
+processors:
+  batch: {}
+
+exporters:
+  otlphttp/openobserve:
+    logs_endpoint: http://openobserve:5080/api/default/v1/logs
+    traces_endpoint: http://openobserve:5080/api/default/v1/traces
+    metrics_endpoint: http://openobserve:5080/api/default/v1/metrics
+    headers:
+      # base64("<email>:<password>") of the OpenObserve root user; injected from env.
+      Authorization: ${env:OPENOBSERVE_AUTH_HEADER}
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/openobserve]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/openobserve]
+    logs:
+      receivers: [filelog]
+      processors: [batch]
+      exporters: [otlphttp/openobserve]

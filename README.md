@@ -61,16 +61,30 @@ pnpm format       # biome --write
 
 ## Deployment
 
-Docker Compose on a VPS, automated with Ansible. Optional self-hosted observability (OpenObserve) ships
-as an off-by-default Compose profile.
+Docker Compose on a VPS, automated with Ansible. Optional self-hosted observability (OpenTelemetry
+Collector + OpenObserve) ships as an off-by-default Compose profile, with opt-in browser tracing that
+makes a click → API → DB query one end-to-end trace — 5xx exceptions are recorded on their span and
+frontend errors can go to Sentry (opt-in) tagged with the trace id, so the trace is the hub for
+debugging failures. See [`docs/OBSERVABILITY.md`](./docs/OBSERVABILITY.md) for what runs by default, how
+to enable traces/metrics/logs with correlation, how to read it in OpenObserve, sampling/alerts, and how
+to switch backends.
 
 ```bash
-docker compose --env-file .env -f infra/docker/docker-compose.yml up -d          # base stack
-docker compose --env-file .env -f infra/docker/docker-compose.yml --profile observability up -d   # + OpenObserve
-pnpm deploy:vps                                                   # Ansible deploy (renders .env, passes --env-file)
+# Local full-stack smoke test — NO --env-file. Compose's in-network defaults wire the services by name
+# (postgres/redis/otel-collector) and use throwaway change-me secrets — what a local run wants. Passing
+# --env-file .env here injects the host-oriented root .env (DATABASE_URL=…@localhost) and the backend
+# crash-loops looking for Postgres inside its own container.
+docker compose -f infra/docker/docker-compose.yml up -d                                  # base stack
+OTEL_SDK_DISABLED=false docker compose -f infra/docker/docker-compose.yml --profile observability up -d   # + OpenObserve
+
+# Production — Ansible renders a container-oriented .env (service-name hosts + real vault secrets) and
+# passes --env-file. Don't hand-run raw compose against a public host.
+pnpm deploy:vps
 ```
 
-Manage secrets with Ansible Vault or SOPS — never commit a real `.env`.
+Manage secrets with Ansible Vault or SOPS — never commit a real `.env`. The repo-root `.env` /
+`.env.example` is **host-oriented** (for `pnpm dev`); the container stack gets its in-network hosts from
+Compose defaults locally, and from the Ansible-rendered `.env` in production.
 
 ## AI skills
 

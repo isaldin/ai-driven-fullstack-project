@@ -21,9 +21,22 @@ Telegram bot, PostgreSQL via ZenStack v3, deployable to a VPS with Docker Compos
 - **Shared packages**: `@app/config` (Zod env), `@app/contracts` (Zod schemas/types),
   `@app/observability` (Pino + OpenTelemetry), `@app/api-client` (typed REST client), `@app/tsconfig`.
 - **Tooling**: Biome (format + lint), `tsc`/`vue-tsc` (types), Vitest (tests, unit + e2e).
-- **Observability**: Pino logs, OpenTelemetry traces/metrics over OTLP, `@nestjs/terminus` health.
-  Default optional backend is OpenObserve (Compose `observability` profile, off by default). OTel is off
-  unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set and `OTEL_SDK_DISABLED=false`.
+- **Observability**: Pino logs (stdout), OpenTelemetry traces/metrics, `@nestjs/terminus` health. An
+  OpenTelemetry Collector is the single egress — it receives OTLP traces/metrics, tails container stdout
+  for logs, and promotes `trace_id`/`span_id` onto log records for log↔trace correlation — forwarding all
+  three to OpenObserve. The frontend can opt into **browser tracing** (`instrumentation-fetch` + a W3C
+  `traceparent` header), making a click → API call → DB query one distributed trace across `app-frontend`
+  and `app-backend`. A backend interceptor records 5xx exceptions on their span (message + stack), so the
+  trace is the hub for debugging failures; the frontend can also opt into **Sentry** (`VITE_SENTRY_DSN`)
+  for JS errors + Session Replay, with each event tagged by the OTel `trace_id` — Sentry stays errors-only
+  so OTel remains the single distributed tracer. Secrets are redacted from logs (`LOG_REDACT_PATHS`).
+  Noise is off by default: per-middleware spans behind `OTEL_VERBOSE_SPANS`, per-request access logs
+  demoted to `debug` (4xx/5xx still surface). All optional: the `observability` Compose profile
+  (collector + OpenObserve) is off by default; backend/bot OTel is off unless `OTEL_EXPORTER_OTLP_ENDPOINT`
+  is set and `OTEL_SDK_DISABLED=false`; browser tracing is off unless `VITE_OTEL_EXPORTER_OTLP_ENDPOINT` is
+  set; Sentry is off unless `VITE_SENTRY_DSN` is set. Full guide (what's on by default, how to enable,
+  reading it in OpenObserve, correlation, sampling, alerts, switching backends):
+  [`docs/OBSERVABILITY.md`](./docs/OBSERVABILITY.md).
 
 ## Structure
 
@@ -83,6 +96,12 @@ Copy `.env.example` to `.env` first.
 - **ESM discipline**: relative imports use explicit `.js` extensions (NodeNext). Backend/bot build with
   `tsc` (emits decorator metadata); tests use Vitest + `unplugin-swc`.
 - Env is validated by `@app/config` (Zod) and fails fast. Add new vars there and in `.env.example`.
+- **Instrument what you add.** New API routes, services, workers, and bot handlers ship with telemetry,
+  not as an afterthought: RED metrics for a route (rate / errors / duration), a span around notable work
+  (an external call, a DB transaction, a job step), and a structured log line carrying request context.
+  5xx already land on the active trace span via the exception interceptor — surface errors, don't swallow
+  them. What to collect and where to stop, plus the cardinality/redaction limits and per-signal
+  "definition of done": [`docs/OBSERVABILITY.md`](./docs/OBSERVABILITY.md) §10–§13.
 - **Local `.env` loading.** `@app/config` is a pure validator — it reads `process.env`, it does not read a
   file. The single repo-root `.env` is injected at the script layer for local dev: node entrypoints use
   Node's native `--env-file-if-exists=../../.env` (backend/bot `dev`+`start`, `db:seed`); the `zen`/Prisma
@@ -135,11 +154,18 @@ repo Actions variables it sets are what container-based runners need but GitHub-
 These were verified end-to-end (live Compose deploy on a simulated VPS + a green CI run on a
 GitHub-Actions-compatible runner). Keep them intact:
 
-- **Compose requires `--env-file .env` explicitly.** `docker compose` resolves `${VAR}` interpolation
-  (published ports, `environment:` secrets, the frontend `VITE_API_URL` build arg) from the compose
-  file's own directory (`infra/docker/`), NOT the repo root. Without `--env-file .env` the rendered
-  root `.env` is ignored and the stack silently falls back to the `change-me` defaults. The Ansible
-  deploy (`infra/ansible/deploy.yml`) and the README/Compose commands already pass it — never drop it.
+- **`--env-file` is for prod (a *container-oriented* `.env`), not the host `.env.example`.** `docker
+  compose` interpolates `${VAR}` (published ports, `environment:` secrets, the frontend `VITE_API_URL`
+  build arg) from `--env-file`/the shell, NOT the repo root, and `environment:` entries default to
+  in-network service names (`${DATABASE_URL:-…@postgres:5432/…}`, redis, otel-collector). The Ansible
+  deploy (`infra/ansible/deploy.yml`) renders a container-oriented `.env` (service-name hosts + real vault
+  secrets) and passes `--env-file` — that's the path the `change-me`-fallback warning is about (never
+  deploy without it). But the repo-root `.env`/`.env.example` is **host-oriented** (`localhost` hosts, for
+  `pnpm dev`): passing *that* to the container stack with `--env-file` overrides the in-network defaults
+  and the backend crash-loops looking for Postgres at `localhost:5432` inside its own container. So for a
+  **local** container run, omit `--env-file` (Compose's in-network defaults + throwaway `change-me`
+  secrets are right for a throwaway stack); enable observability via a shell var (`OTEL_SDK_DISABLED=false
+  docker compose … up`). See README Deployment and `docs/OBSERVABILITY.md` "Turn it on".
 - **`BACKEND_PORT` maps host→container `3000`** (`"${BACKEND_PORT:-3000}:3000"`) and the app listens on
   `BACKEND_PORT` inside the container. Only `3000` keeps the published and listen ports aligned; you can
   remap the postgres/redis/frontend host ports freely, but leave backend at `3000` (or change both sides).
@@ -165,8 +191,12 @@ New-project fill-in steps (remote, vault secrets, bot token): see [`docs/QUICKST
 ## Skills
 
 Run `pnpm skills:install` (or `node scripts/install-skills.mjs`) to install the agent skills for this
-stack (ZenStack v3, NestJS, Node backend, Telegram bot, DevOps/Ansible, architecture). See the script
-for the exact list. Skills download once into the canonical `.agents/skills/` store (read directly by the
+stack (ZenStack v3, NestJS, Node backend, Telegram bot, DevOps/Ansible, architecture, OpenTelemetry
+observability). See the script for the exact list. The `otel-*` skills (`dash0hq/agent-skills`) are
+advisory concept guidance — use them for spans/metrics/logs/resources, sampling and collector-pipeline
+patterns when following "Instrument what you add" above, **not** to replace our programmatic SDK
+bootstrap in `packages/observability/src/otel.ts` (which is a first-class OTel setup, not the zero-code
+`auto-instrumentations-node/register` path those skills default to). Skills download once into the canonical `.agents/skills/` store (read directly by the
 `.agents`-convention agents — Codex, Gemini CLI, etc.) and are mirrored into `.claude/skills/` as relative
 symlinks for Claude Code, so no content is duplicated. The installer is non-interactive (`-y`, CI-safe)
 and idempotent — a skill already in `.agents/skills/` is not re-downloaded (delete it or `npx skills

@@ -44,6 +44,12 @@ const skills = [
   ['zenstackhq/skills', 'zenstack-crud-server'],
   ['zenstackhq/skills', 'zenstack-db-migration'],
   ['aj-geddes/useful-ai-prompts', 'ansible-automation'],
+  // Observability (OpenTelemetry). otel-instrumentation: Node/browser SDK, spans/metrics/logs,
+  // resources, sensitive-data. otel-collector: pipelines/processors/sampling/RED metrics.
+  // Advisory concept guidance — NOT a replacement for our programmatic SDK bootstrap
+  // (packages/observability/src/otel.ts); see AGENTS.md.
+  ['dash0hq/agent-skills', 'otel-instrumentation'],
+  ['dash0hq/agent-skills', 'otel-collector'],
 ];
 
 // `npx` is a shell shim on Windows.
