@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Setup workspace
         uses: ./.github/actions/setup
       # Expiry is time-based, so an exception that was valid at merge time can be
@@ -48,7 +48,7 @@ jobs:
             file: infra/docker/Dockerfile.bot
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Setup workspace
         uses: ./.github/actions/setup
       - name: Generate .trivyignore from active exceptions
@@ -84,7 +84,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: File / update a security-rescan issue
         env:
           GH_TOKEN: ${{ github.token }}
