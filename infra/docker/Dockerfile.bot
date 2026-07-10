@@ -8,7 +8,7 @@
 # ─────────────────────────────────────────────────────────────
 
 # ---- base --------------------------------------------------------------------
-FROM node:22-bookworm-slim AS base
+FROM node:26-bookworm-slim AS base
 ENV CI=true
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
@@ -33,7 +33,7 @@ RUN pnpm exec turbo run build --filter=@app/telegram-bot
 # The bot's runtime deps (grammy, ioredis, @grammyjs/storage-redis) are pure JS,
 # so the runner drops python3/make/g++ from the build base — smaller image and a
 # smaller attack surface.
-FROM node:22-bookworm-slim AS runtime-base
+FROM node:26-bookworm-slim AS runtime-base
 ENV CI=true
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
