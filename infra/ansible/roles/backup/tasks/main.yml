@@ -1,0 +1,124 @@
+---
+# Install the backup + restore-drill scripts and their systemd timers.
+- name: PostgreSQL backups
+  when: manage_backups | bool
+  block:
+    - name: Ensure postgresql-client + openssl are present (pg_dump/pg_restore/cms)
+      ansible.builtin.apt:
+        name:
+          - postgresql-client
+          - openssl
+        state: present
+        update_cache: true
+
+    - name: Ensure backup directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+      loop:
+        - "{{ app_dir }}/scripts/backup"
+        - "{{ backup_dir }}"
+
+    - name: Install backup + restore-drill scripts
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../scripts/backup/{{ item }}"
+        dest: "{{ app_dir }}/scripts/backup/{{ item }}"
+        mode: "0750"
+      loop:
+        - pg-backup.sh
+        - restore-drill.sh
+
+    - name: Assert the recipient cert is present (encrypt-only public key)
+      ansible.builtin.stat:
+        path: "{{ backup_recipient_cert }}"
+      register: cert_stat
+
+    - name: Fail if the recipient cert is missing
+      ansible.builtin.fail:
+        msg: "backup_recipient_cert not found at {{ backup_recipient_cert }} — copy the PUBLIC cert.pem here (private key stays off-host). See docs/runbooks/BACKUP_RESTORE.md."
+      when: not cert_stat.stat.exists
+
+    # --- Nightly backup service + timer -----------------------------------
+    - name: Install the backup systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/app-backup.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Encrypted off-host PostgreSQL backup
+          After=docker.service
+          [Service]
+          Type=oneshot
+          Environment=DATABASE_URL={{ backup_database_url }}
+          Environment=BACKUP_RECIPIENT_CERT={{ backup_recipient_cert }}
+          Environment=BACKUP_DEST={{ backup_dest }}
+          Environment=BACKUP_WORKDIR={{ backup_dir }}
+          Environment=BACKUP_LABEL={{ backup_label }}
+          Environment=RETENTION_DAILY={{ retention_daily }}
+          Environment=RETENTION_WEEKLY={{ retention_weekly }}
+          Environment=RETENTION_MONTHLY={{ retention_monthly }}
+          Environment=ALERT_WEBHOOK={{ backup_alert_webhook }}
+          ExecStart=/bin/bash {{ app_dir }}/scripts/backup/pg-backup.sh
+      no_log: true
+
+    - name: Install the backup systemd timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/app-backup.timer
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Nightly PostgreSQL backup
+          [Timer]
+          OnCalendar={{ backup_schedule }}
+          Persistent=true
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable + start the backup timer
+      ansible.builtin.systemd:
+        name: app-backup.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # --- Monthly restore drill (only when a private key is provided) ------
+    - name: Install the restore-drill service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/app-restore-drill.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Monthly restore drill (verifies backups are recoverable)
+          After=docker.service
+          [Service]
+          Type=oneshot
+          Environment=BACKUP_DEST={{ backup_dest }}
+          Environment=BACKUP_PRIVATE_KEY={{ drill_private_key }}
+          Environment=RESTORE_DATABASE_URL={{ drill_restore_database_url }}
+          Environment=BACKUP_LABEL={{ backup_label }}
+          ExecStart=/bin/bash {{ app_dir }}/scripts/backup/restore-drill.sh
+      no_log: true
+      when: drill_private_key | length > 0
+
+    - name: Install the restore-drill timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/app-restore-drill.timer
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Monthly restore drill
+          [Timer]
+          OnCalendar={{ drill_schedule }}
+          Persistent=true
+          [Install]
+          WantedBy=timers.target
+      when: drill_private_key | length > 0
+
+    - name: Enable + start the restore-drill timer
+      ansible.builtin.systemd:
+        name: app-restore-drill.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: drill_private_key | length > 0

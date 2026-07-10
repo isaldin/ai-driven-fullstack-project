@@ -1,0 +1,112 @@
+---
+# Host hardening for the single-VPS profile. Idempotent; each concern gated by a
+# flag in defaults/main.yml. See docs/runbooks/HOST_HARDENING.md.
+- name: Host hardening
+  when: harden_host | bool
+  block:
+    # --- Firewall: default-deny inbound, allow only SSH + 80/443 -----------
+    - name: Install ufw
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: true
+      when: manage_firewall | bool
+
+    # Allow SSH BEFORE enabling ufw so we can never lock ourselves out.
+    - name: Allow SSH from the permitted network
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+        from_ip: "{{ ssh_allowed_cidr }}"
+      when: manage_firewall | bool
+
+    - name: Allow public application ports (Caddy)
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ public_tcp_ports }}"
+      when: manage_firewall | bool
+
+    - name: Default-deny inbound, allow outbound, enable ufw
+      community.general.ufw:
+        state: enabled
+        policy: "{{ item.policy }}"
+        direction: "{{ item.direction }}"
+      loop:
+        - { direction: incoming, policy: deny }
+        - { direction: outgoing, policy: allow }
+      when: manage_firewall | bool
+
+    # --- Automatic security updates ---------------------------------------
+    - name: Install unattended-upgrades
+      ansible.builtin.apt:
+        name:
+          - unattended-upgrades
+          - apt-listchanges
+        state: present
+        update_cache: true
+      when: manage_unattended_upgrades | bool
+
+    - name: Enable periodic + unattended upgrades
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+      when: manage_unattended_upgrades | bool
+
+    # --- Docker daemon logging limits (all containers, defence in depth) ---
+    - name: Ensure /etc/docker exists
+      ansible.builtin.file:
+        path: /etc/docker
+        state: directory
+        mode: "0755"
+      when: manage_docker_logging | bool
+
+    - name: Configure Docker daemon default log limits
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "{{ docker_log_max_size }}",
+              "max-file": "{{ docker_log_max_file }}"
+            },
+            "live-restore": true
+          }
+      notify: Restart docker
+      when: manage_docker_logging | bool
+
+    # --- Time synchronization ---------------------------------------------
+    - name: Ensure systemd-timesyncd is running
+      ansible.builtin.systemd:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
+      when: manage_time_sync | bool
+      failed_when: false
+
+    # --- Optional SSH hardening (host you fully own) ----------------------
+    - name: Harden sshd (no root login, no password auth)
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/10-hardening.conf
+        mode: "0644"
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          ChallengeResponseAuthentication no
+      when: manage_ssh_hardening | bool
+      notify: Restart sshd
+
+  rescue:
+    - name: Host hardening failed
+      ansible.builtin.fail:
+        msg: >-
+          Host hardening failed. Review the failing task above. If a firewall
+          rule risks locking you out, re-run with manage_firewall=false and fix
+          access first. See docs/runbooks/HOST_HARDENING.md.

@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────────────────────
+# Security exceptions allowlist (machine-readable).
+#
+# Each entry temporarily waives ONE advisory for the dependency-audit and image
+# scan gates. Rules enforced by scripts/check-security-exceptions.mjs (run in CI):
+#   - every field below is required and non-empty;
+#   - `created` and `expires` are YYYY-MM-DD;
+#   - `expires` is in the future (an expired exception fails CI);
+#   - a HIGH/CRITICAL exception may not exceed 30 days from `created`;
+#   - no open-ended / indefinite exceptions.
+#
+# An exception is a stop-gap, not a fix. Prefer upgrading the dependency. When an
+# entry expires the gate goes red again — that is the point.
+#
+# Schema (one list item per waived advisory):
+#   - advisory: GHSA-xxxx-xxxx-xxxx        # advisory / CVE id
+#     component: package-or-image@range    # what it applies to
+#     severity: high                       # critical | high | moderate | low
+#     reason: not reachable because ...     # why it is safe for now
+#     compensating_controls: ...            # what limits the risk meanwhile
+#     owner: team-or-person                 # who owns closing it
+#     created: 2026-07-10
+#     expires: 2026-08-09                   # <= created + 30d for high/critical
+#
+# The two active entries below waive CVEs that live in pnpm's OWN bundled CLI
+# (COREPACK_HOME), shipped in the backend/bot runtime images solely to run
+# `zen migrate deploy` at container start. They are NOT application dependencies
+# (absent from pnpm-lock.yaml) and are not reachable by the long-running service.
+# Durable fix (tracked): run zen migrations without shipping the pnpm CLI in the
+# runtime image, or bump the pinned pnpm once its bundle carries the fixes.
+exceptions:
+  - advisory: CVE-2026-33671
+    component: picomatch (bundled in the pnpm CLI, COREPACK_HOME)
+    severity: high
+    reason: >-
+      ReDoS in picomatch. Present only in the pnpm CLI bundle shipped in the
+      backend/bot runtime images for the container-start `zen migrate deploy`
+      step; it is not an application dependency (the lockfile resolves
+      picomatch@4.0.4) and is never imported by the running NestJS/grammY service.
+    compensating_controls: >-
+      pnpm runs once at container start for migrations, with a fixed first-party
+      filter (`@app/backend`) — no attacker-controlled glob reaches picomatch —
+      and the long-running service process never loads it. Durable fix tracked:
+      drop the pnpm CLI from the runtime image (invoke zen directly) or bump the
+      pinned pnpm once its bundle carries picomatch >= 4.0.4.
+    owner: isaldin
+    created: 2026-07-10
+    expires: 2026-08-09
+  - advisory: CVE-2026-48815
+    component: sigstore (bundled in the pnpm CLI, COREPACK_HOME)
+    severity: high
+    reason: >-
+      sigstore certificateOIDs verification-constraint issue. Present only in the
+      pnpm CLI bundle shipped for the container-start `zen migrate deploy`; it is
+      not an application dependency (absent from pnpm-lock.yaml) and is never
+      invoked by the running service.
+    compensating_controls: >-
+      pnpm's provenance/signature-verification path runs during package INSTALL,
+      which does not happen at container start (migrations only). The vulnerable
+      code path is therefore not exercised. Durable fix tracked: drop the pnpm CLI
+      from the runtime image or bump the pinned pnpm once its bundle carries
+      sigstore >= 4.1.1.
+    owner: isaldin
+    created: 2026-07-10
+    expires: 2026-08-09

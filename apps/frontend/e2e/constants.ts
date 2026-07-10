@@ -15,6 +15,12 @@ export const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 export const DATABASE_URL = `postgresql://postgres:postgres@${dbHost}:5432/app_e2e_web`;
 
 /**
+ * Admin the suite logs in with. Bootstrapped by global-setup via `bootstrap-admin`
+ * (password >= 12 chars, as the CLI requires). Not a real secret.
+ */
+export const E2E_ADMIN = { email: 'admin@example.com', password: 'e2e-admin-pass-1234' };
+
+/**
  * Full environment the e2e backend needs. Passed explicitly (not via a .env file)
  * so the suite is self-contained and runs in CI with no .env present. The app
  * scripts load `.env` with `--env-file-if-exists` in non-override mode, so these win.
@@ -23,7 +29,6 @@ export const backendEnv: Record<string, string> = {
   NODE_ENV: 'test',
   DATABASE_URL,
   JWT_ACCESS_SECRET: 'e2e-access-secret-0123456789abcdef',
-  JWT_REFRESH_SECRET: 'e2e-refresh-secret-0123456789abcdef',
   SERVICE_API_TOKEN: 'e2e-service-token',
   BACKEND_PORT: String(BACKEND_PORT),
   CORS_ORIGIN: BASE_URL,

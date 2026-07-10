@@ -1,8 +1,10 @@
 # VPS Deployment (Ansible + Docker Compose)
 
 Automated deploy of the full stack (backend, frontend, telegram-bot, postgres,
-redis, optional OpenObserve) to a VPS. Ansible syncs the repo to the server,
-renders a `.env`, builds images, applies DB migrations, and starts the stack.
+redis, optional OpenObserve) to a VPS. Ansible copies the compose/config files to
+the server, renders a `.env`, **pulls the immutable image digests** built + signed
+in CI (it never runs `git clone` or `docker compose build` on the VPS), applies DB
+migrations, and starts the stack.
 
 ## Prerequisites
 
@@ -82,13 +84,23 @@ ansible-playbook --syntax-check -i infra/ansible/inventory.ini infra/ansible/dep
 
 ## What the playbook does
 
-1. Verifies Docker CLI, the Compose plugin, and a running daemon on the target.
-2. Clones/updates the repo into `{{ app_dir }}` (default `/opt/app`).
-3. Renders `{{ app_dir }}/.env` (mode `0600`) from vars + vault.
-4. `docker compose build` all images.
-5. Starts `postgres` + `redis`, then runs `zen migrate deploy` via
+1. Runs the production preflight (with `-e deployment_environment=production`):
+   rejects placeholders, moving refs, non-digest images, `example.com`, non-HTTPS
+   origins and weak/duplicate secrets **before** mutating server state.
+2. Verifies Docker CLI, the Compose plugin, and a running daemon on the target.
+3. Copies the compose + runtime config (`docker-compose.yml`, `Caddyfile`,
+   `otel-collector-config.yaml`) into `{{ app_dir }}` (default `/opt/app`) — **no
+   `git clone`, no build context on the VPS**.
+4. Renders `{{ app_dir }}/.env` (mode `0600`, root-owned) from vars + vault.
+5. Verifies the cosign signatures of `backend_image`/`frontend_image`/`bot_image`
+   (fail-closed unless `verify_image_signatures=false`).
+6. `docker compose pull` the exact **image digests** (`…@sha256:…`) — never built here.
+7. Starts `postgres` + `redis`, then runs `zen migrate deploy` via
    `docker compose run --rm backend pnpm --filter @app/backend db:migrate`.
    (The backend container also runs migrations on boot; this makes the step
    explicit and observable. Both are idempotent.)
-6. `docker compose up -d` the full stack (plus any `compose_profiles`).
-7. Prunes dangling images.
+8. `docker compose up -d` the full stack (plus any `compose_profiles`, e.g. `edge`).
+9. Waits for the backend to report ready (checked from inside the backend
+   container, since the hardened compose publishes only Caddy).
+10. Writes the release manifest (`releases/<tag>.json` + `current.json`) for rollback.
+11. Prunes dangling images.

@@ -1,0 +1,32 @@
+---
+# Host-hardening knobs. All steps are individually toggleable so the role fits
+# hosts you fully own AND hosts where some concerns are managed elsewhere.
+
+# Master switch for the whole role.
+harden_host: true
+
+# --- Firewall (ufw) -------------------------------------------------------
+manage_firewall: true
+ssh_port: 22
+# CIDR allowed to reach SSH. Keep it as open as you must, as tight as you can.
+ssh_allowed_cidr: "0.0.0.0/0"
+# Public application ports (Caddy). Nothing else is opened.
+public_tcp_ports:
+  - 80
+  - 443
+
+# --- Automatic security updates ------------------------------------------
+manage_unattended_upgrades: true
+
+# --- Docker daemon logging (belt-and-suspenders vs per-service limits) ----
+manage_docker_logging: true
+docker_log_max_size: "10m"
+docker_log_max_file: "5"
+
+# --- Time synchronization -------------------------------------------------
+manage_time_sync: true
+
+# --- SSH hardening (only when you provision the host) ---------------------
+# Off by default: flipping these on a host you don't fully control can lock you
+# out. Enable deliberately once key-based access is confirmed.
+manage_ssh_hardening: false

@@ -1,6 +1,5 @@
 import { expect, type Page, type Response, test } from '@playwright/test';
-
-const ADMIN = { email: 'admin@example.com', password: 'admin12345' };
+import { E2E_ADMIN as ADMIN } from './constants';
 
 const isLoginPost = (r: Response): boolean =>
   r.url().endsWith('/auth/login') && r.request().method() === 'POST';

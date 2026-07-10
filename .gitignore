@@ -46,3 +46,6 @@ infra/ansible/group_vars/all/vault.yml
 
 # local CI harness (Gitea access token minted at runtime)
 infra/ci-local/.token
+
+# generated from .security/exceptions.yaml by scripts/check-security-exceptions.mjs
+.trivyignore

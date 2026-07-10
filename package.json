@@ -20,15 +20,20 @@
     "db:migrate": "pnpm --filter @app/backend db:migrate",
     "db:migrate:dev": "pnpm --filter @app/backend db:migrate:dev",
     "db:seed": "pnpm --filter @app/backend db:seed",
-    "docker:up": "docker compose -f infra/docker/docker-compose.yml up -d postgres redis",
-    "docker:down": "docker compose -f infra/docker/docker-compose.yml down",
+    "bootstrap-admin": "pnpm --filter @app/backend bootstrap-admin",
+    "docker:up": "docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml up -d postgres redis",
+    "docker:down": "docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml down",
+    "docker:dev": "docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml up -d --build",
     "deploy:vps": "ansible-playbook -i infra/ansible/inventory.ini infra/ansible/deploy.yml",
-    "skills:install": "node scripts/install-skills.mjs"
+    "deploy:rollback": "ansible-playbook -i infra/ansible/inventory.ini infra/ansible/rollback.yml",
+    "skills:install": "node scripts/install-skills.mjs",
+    "skills:verify": "node scripts/verify-skills.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.2",
     "@types/node": "26.1.0",
     "turbo": "2.10.2",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "yaml": "2.8.1"
   }
 }

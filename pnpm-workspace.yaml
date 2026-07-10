@@ -2,6 +2,18 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# Dependency version floors enforced across the whole graph (pnpm 11 reads
+# `overrides` here, not from package.json).
+#
+# multer: security floor for GHSA-72gw-mp4g-v24j (DoS via deeply nested field
+#   names; fixed in 2.2.0). The primary fix is @nestjs/platform-express>=11.1.28,
+#   which already pins multer>=2.2.0; this floor is defence-in-depth so a
+#   transitive NestJS bump can never reintroduce multer<2.2.0. Remove only once
+#   every NestJS package in the graph declares multer>=2.2.0 and
+#   `pnpm why multer` shows no <2.2.0 path.
+overrides:
+  multer: ">=2.2.0"
+
 # Native/postinstall build scripts we trust (pnpm 11 blocks these by default).
 allowBuilds:
   "@prisma/engines": true

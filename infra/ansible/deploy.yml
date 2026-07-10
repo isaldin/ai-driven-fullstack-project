@@ -1,28 +1,41 @@
 ---
 # ─────────────────────────────────────────────────────────────
-# VPS deployment playbook.
+# VPS deployment playbook — deploy immutable image DIGESTS built + signed in CI.
 #
 #   pnpm deploy:vps
 #     -> ansible-playbook -i infra/ansible/inventory.ini infra/ansible/deploy.yml
 #
+# The VPS never runs `git clone` or `docker compose build`: Ansible COPIES the
+# compose/config files from the control node and `docker compose pull`s the exact
+# digests recorded in group_vars (backend_image/frontend_image/bot_image). Rollback
+# = re-run with the previous release's digests (see docs/runbooks/ROLLBACK.md).
+#
 # Add `--ask-vault-pass` (or --vault-password-file) when a vault.yml is present.
-# Non-secret config lives in group_vars/all.yml; secrets in an encrypted vault
-# (see README.md). Tasks are idempotent — re-running only changes what drifted.
 # ─────────────────────────────────────────────────────────────
 - name: Deploy the monorepo stack via Docker Compose
   hosts: app
   become: true
   gather_facts: true
 
+  roles:
+    # Firewall (only 80/443 + SSH), automatic security updates, Docker log limits,
+    # time sync. Runs before the deploy tasks. Toggle via host_hardening=false.
+    - role: host_hardening
+    # Encrypted off-host PostgreSQL backups + monthly restore drill (systemd
+    # timers). Toggle via manage_backups=false.
+    - role: backup
+
   tasks:
     # --- Optional encrypted secrets ---------------------------------------
-    # Loaded only if an (encrypted) vault file exists next to the playbook, so
-    # the template still parses/dry-runs without one. Overrides the `vault_*`
-    # placeholders defined in group_vars/all.yml.
     - name: Load vaulted secrets if present
       ansible.builtin.include_vars: "{{ item }}"
       no_log: true
       loop: "{{ query('fileglob', playbook_dir + '/group_vars/all/vault.yml') + query('fileglob', playbook_dir + '/vault.yml') }}"
+
+    # --- Production preflight (fail before mutating server state) ----------
+    # Full secret/placeholder assertions live in preflight.yml (imported here).
+    - name: Run production preflight assertions
+      ansible.builtin.import_tasks: preflight.yml
 
     # --- Pre-flight: Docker + Compose plugin ------------------------------
     - name: Ensure the docker CLI is installed
@@ -43,20 +56,26 @@
       changed_when: false
       failed_when: docker_info.rc != 0
 
-    # --- Sync source ------------------------------------------------------
-    - name: Ensure the application directory exists
+    # --- Ship the compose/config files (NO git clone on the VPS) ----------
+    - name: Ensure the application directories exist
       ansible.builtin.file:
-        path: "{{ app_dir }}"
+        path: "{{ item }}"
         state: directory
         mode: "0755"
+      loop:
+        - "{{ app_dir }}"
+        - "{{ app_dir }}/infra/docker"
+        - "{{ app_dir }}/releases"
 
-    - name: Clone or update the repository
-      ansible.builtin.git:
-        repo: "{{ repo_url }}"
-        dest: "{{ app_dir }}"
-        version: "{{ repo_version }}"
-        force: true
-      register: repo_sync
+    - name: Copy compose + runtime config to the host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../docker/{{ item }}"
+        dest: "{{ app_dir }}/infra/docker/{{ item }}"
+        mode: "0644"
+      loop:
+        - docker-compose.yml
+        - Caddyfile
+        - otel-collector-config.yaml
 
     # --- Render environment file ------------------------------------------
     - name: Template the runtime .env (0600, root-owned)
@@ -66,20 +85,43 @@
         mode: "0600"
       no_log: true
 
-    # --- Build, migrate, run ----------------------------------------------
-    # NOTE: `--env-file .env` is REQUIRED. Compose resolves `${VAR}` interpolation
-    # (published ports, secrets in `environment:`, the frontend VITE_API_URL build
-    # arg) from the project directory, which defaults to the COMPOSE FILE's dir
-    # (infra/docker/) — not the repo root. Without --env-file the rendered
-    # {{ app_dir }}/.env is ignored and the stack silently falls back to the
-    # `change-me` defaults baked into docker-compose.yml. chdir is the repo root,
-    # so `.env` here resolves to {{ app_dir }}/.env.
-    - name: Build images
+    # --- Verify signatures of the digests we're about to run --------------
+    # Fails closed: if verification is on but cosign is missing, stop (don't
+    # silently deploy unverified images). Set verify_image_signatures=false to
+    # skip only with a deliberate decision.
+    - name: Check whether cosign is available
+      ansible.builtin.command: cosign version
+      register: cosign_check
+      changed_when: false
+      failed_when: false
+      when: verify_image_signatures | bool
+
+    - name: Fail if signature verification is required but cosign is missing
+      ansible.builtin.fail:
+        msg: "verify_image_signatures=true but cosign is not installed on the host. Install cosign or set verify_image_signatures=false deliberately."
+      when: verify_image_signatures | bool and cosign_check.rc != 0
+
+    - name: Verify cosign signatures for each image digest
       ansible.builtin.command:
-        cmd: "docker compose -f {{ compose_file }} --env-file .env build"
+        cmd: >-
+          cosign verify
+          --certificate-oidc-issuer {{ cosign_oidc_issuer }}
+          --certificate-identity-regexp {{ cosign_identity_regexp }}
+          {{ item }}
+      loop:
+        - "{{ backend_image }}"
+        - "{{ frontend_image }}"
+        - "{{ bot_image }}"
+      register: cosign_verify
+      changed_when: false
+      when: verify_image_signatures | bool and cosign_check.rc == 0
+
+    # --- Pull, migrate, run (pull-by-digest; NEVER build on the VPS) ------
+    - name: Pull image digests
+      ansible.builtin.command:
+        cmd: "docker compose -f {{ compose_file }} --env-file .env pull"
         chdir: "{{ app_dir }}"
-      register: compose_build
-      changed_when: "'Building' in compose_build.stderr or 'DONE' in compose_build.stderr or compose_build.rc == 0"
+      changed_when: true
 
     - name: Start database and cache (so migrations have a target)
       ansible.builtin.command:
@@ -105,17 +147,42 @@
       changed_when: true
 
     # --- Post-deploy verification -----------------------------------------
-    # A container that boots then crash-loops (bad migration/secret) would
-    # otherwise be reported as a successful deploy. Gate on real readiness.
+    # The hardened prod compose does NOT publish the backend on the host (only
+    # Caddy publishes 80/443; the backend is `expose`-only, reachable in-network
+    # by name). So confirm readiness from INSIDE the backend container, where the
+    # app listens — this works regardless of host port publishing, TLS or DNS.
     - name: Wait for the backend to report ready
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ backend_port }}/health/ready"
-        status_code: 200
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f {{ compose_file }} --env-file .env exec -T backend
+          node -e "fetch('http://127.0.0.1:{{ backend_port }}/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        chdir: "{{ app_dir }}"
       register: backend_ready
       retries: 20
       delay: 6
-      until: backend_ready.status == 200
+      until: backend_ready.rc == 0
       changed_when: false
+
+    # --- Record the release manifest for rollback -------------------------
+    - name: Write the deployed release manifest
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/releases/{{ repo_version }}.json"
+        mode: "0644"
+        content: |
+          {
+            "releaseTag": "{{ repo_version }}",
+            "images": {
+              "backend": "{{ backend_image }}",
+              "frontend": "{{ frontend_image }}",
+              "bot": "{{ bot_image }}"
+            }
+          }
+
+    - name: Update the "current release" pointer (previous kept for rollback)
+      ansible.builtin.command:
+        cmd: "cp -f releases/{{ repo_version }}.json releases/current.json"
+        chdir: "{{ app_dir }}"
+      changed_when: true
 
     # --- Housekeeping -----------------------------------------------------
     - name: Prune dangling images to reclaim disk

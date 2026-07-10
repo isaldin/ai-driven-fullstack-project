@@ -9,16 +9,40 @@
 # --- Where and what to deploy ---------------------------------------------
 app_dir: /opt/app
 repo_url: "https://github.com/your-org/your-repo.git"
-# Deploy an immutable ref for reproducible releases: set this to a release tag or
-# commit SHA (e.g. v1.2.0) rather than a moving branch. Rollback = re-run the
-# playbook with repo_version set to the previous tag/SHA. `main` is a convenience
-# default for first-time / dev deploys only.
+# Immutable release ref (the tag the images were built + signed from). The
+# production preflight rejects moving branches (main/master/HEAD). Rollback =
+# re-run with the previous release tag + its digests.
 repo_version: main
+
+# Deployment gate: a REAL production deploy must pass `-e deployment_environment=production`
+# so preflight enforces the strict checks (digests, no placeholders, HTTPS, ...).
+deployment_environment: dev
+
+# Immutable image digests from the release manifest (…@sha256:…). Set per release.
+# The `:local` fallbacks let a dev inventory reference the base compose without a
+# release; production preflight requires real digests.
+registry: "ghcr.io/your-org/your-repo"
+backend_image: "{{ registry }}/backend:local"
+frontend_image: "{{ registry }}/frontend:local"
+bot_image: "{{ registry }}/telegram-bot:local"
+
+# Verify cosign signatures on the host before running (fails closed if cosign is
+# absent — see docs/runbooks/ROLLBACK.md). Identity regexp matches this repo's
+# release workflow OIDC identity.
+verify_image_signatures: true
+cosign_oidc_issuer: "https://token.actions.githubusercontent.com"
+cosign_identity_regexp: "https://github.com/your-org/your-repo/.github/workflows/release.yml@.*"
+
 compose_file: infra/docker/docker-compose.yml
-compose_profiles: [] # e.g. ["observability"] to also run OpenObserve
+# `edge` starts the Caddy reverse proxy (TLS). Add "observability" to also run
+# the OpenTelemetry Collector + OpenObserve.
+compose_profiles: ["edge"] # e.g. ["edge", "observability"]
 
 # --- Non-secret runtime config (baked into the target .env) ---------------
 node_env: production
+# The stack runs as sibling containers reachable by service name, so the app
+# config validator forbids localhost in DB/Redis/CORS/cookie under production.
+deployment_mode: compose
 backend_port: 3000
 frontend_port: 8080
 
@@ -32,6 +56,14 @@ cors_origin: "https://app.example.com"
 cookie_domain: "example.com"
 vite_api_url: "https://api.example.com"
 backend_url: "http://backend:3000" # in-network service address for the bot
+
+# Reverse proxy / TLS (Caddy edge). Set to your real domains + ACME contact.
+app_domain: "app.example.com"
+api_domain: "api.example.com"
+observe_domain: "observe.example.com"
+acme_email: "admin@example.com"
+# "true" only if browser (RUM) tracing is enabled — exposes a locked-down /otlp path.
+enable_browser_otlp: ""
 
 # Observability (app -> OTel Collector -> OpenObserve). Disabled by default. Enable by setting
 # compose_profiles: ["observability"] above AND otel_sdk_disabled: "false". The app pushes OTLP to the
@@ -50,7 +82,6 @@ metrics_exporter: otlp
 vault_postgres_password: "change-me"
 vault_database_url: "postgresql://app:change-me@postgres:5432/app"
 vault_jwt_access_secret: "change-me-access-secret-min-32-chars-long"
-vault_jwt_refresh_secret: "change-me-refresh-secret-min-32-chars-long"
 vault_service_api_token: "change-me-service-token"
 vault_telegram_bot_token: "000000:replace-with-botfather-token"
 vault_redis_url: "redis://redis:6379"

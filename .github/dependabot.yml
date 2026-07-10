@@ -1,0 +1,54 @@
+# Controlled dependency updates for npm, GitHub Actions and Docker base images.
+# Dependabot PRs run the full CI (audit / secret / image-scan / migration gates),
+# so an update that reintroduces a vulnerability or breaks a migration is blocked.
+version: 2
+updates:
+  # ---- npm (pnpm workspace) -------------------------------------------------
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    groups:
+      # Batch low-risk dev tooling to reduce PR noise.
+      dev-tooling:
+        patterns:
+          - "@biomejs/*"
+          - "turbo"
+          - "typescript"
+          - "vitest"
+          - "@types/*"
+      nestjs:
+        patterns:
+          - "@nestjs/*"
+      zenstack:
+        patterns:
+          - "@zenstackhq/*"
+    labels:
+      - dependencies
+      - npm
+
+  # ---- GitHub Actions (keeps SHA pins current) ------------------------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - github-actions
+
+  # ---- Docker base images ---------------------------------------------------
+  - package-ecosystem: docker
+    directories:
+      - "/infra/docker"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - docker

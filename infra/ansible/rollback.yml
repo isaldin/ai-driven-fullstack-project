@@ -1,0 +1,114 @@
+---
+# ─────────────────────────────────────────────────────────────
+# Application rollback — switch the running stack back to a PREVIOUS release's
+# image digests without rebuilding. Forward-compatible-migration model: the
+# schema is left as-is; only the application images roll back (see
+# docs/runbooks/ROLLBACK.md for the DB-incident path).
+#
+#   pnpm deploy:rollback -e "rollback_tag=v1.2.0 \
+#     backend_image=ghcr.io/org/repo/backend@sha256:... \
+#     frontend_image=... bot_image=..."
+#
+# The digests come from the release manifest of the version you're rolling back
+# to (stored at {{ app_dir }}/releases/<tag>.json and produced by the release
+# workflow). Target time: < 15 minutes (see the runbook drill).
+# ─────────────────────────────────────────────────────────────
+- name: Roll the application back to a previous release
+  hosts: app
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Require rollback target
+      ansible.builtin.assert:
+        that:
+          - rollback_tag is defined
+          - backend_image is defined and '@sha256:' in backend_image
+          - frontend_image is defined and '@sha256:' in frontend_image
+          - bot_image is defined and '@sha256:' in bot_image
+        fail_msg: "Provide rollback_tag and the previous release's *_image digests (from its releases/<tag>.json)."
+
+  tasks:
+    - name: Load vaulted secrets if present
+      ansible.builtin.include_vars: "{{ item }}"
+      no_log: true
+      loop: "{{ query('fileglob', playbook_dir + '/group_vars/all/vault.yml') + query('fileglob', playbook_dir + '/vault.yml') }}"
+
+    - name: Re-render .env with the rollback digests
+      ansible.builtin.template:
+        src: templates/env.j2
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+      no_log: true
+      vars:
+        repo_version: "{{ rollback_tag }}"
+
+    # Verify the target digests are signed (same fail-closed policy as deploy.yml).
+    - name: Check whether cosign is available
+      ansible.builtin.command: cosign version
+      register: cosign_check
+      changed_when: false
+      failed_when: false
+      when: verify_image_signatures | bool
+
+    - name: Fail if signature verification is required but cosign is missing
+      ansible.builtin.fail:
+        msg: "verify_image_signatures=true but cosign is not installed. Install cosign or set verify_image_signatures=false deliberately."
+      when: verify_image_signatures | bool and cosign_check.rc != 0
+
+    - name: Verify cosign signatures for each rollback digest
+      ansible.builtin.command:
+        cmd: >-
+          cosign verify
+          --certificate-oidc-issuer {{ cosign_oidc_issuer }}
+          --certificate-identity-regexp {{ cosign_identity_regexp }}
+          {{ item }}
+      loop:
+        - "{{ backend_image }}"
+        - "{{ frontend_image }}"
+        - "{{ bot_image }}"
+      changed_when: false
+      when: verify_image_signatures | bool and cosign_check.rc == 0
+
+    - name: Pull the previous digests
+      ansible.builtin.command:
+        cmd: "docker compose -f {{ compose_file }} --env-file .env pull"
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    - name: Switch the stack to the previous digests
+      ansible.builtin.command:
+        cmd: >
+          docker compose -f {{ compose_file }} --env-file .env
+          {% for p in compose_profiles %}--profile {{ p }} {% endfor %}up -d
+        chdir: "{{ app_dir }}"
+      changed_when: true
+
+    # Backend is `expose`-only in the hardened prod compose (only Caddy publishes
+    # host ports), so confirm readiness from INSIDE the backend container.
+    - name: Wait for the backend to report ready
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f {{ compose_file }} --env-file .env exec -T backend
+          node -e "fetch('http://127.0.0.1:{{ backend_port }}/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        chdir: "{{ app_dir }}"
+      register: backend_ready
+      retries: 20
+      delay: 6
+      until: backend_ready.rc == 0
+      changed_when: false
+
+    - name: Record the rollback as the current release
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/releases/current.json"
+        mode: "0644"
+        content: |
+          {
+            "releaseTag": "{{ rollback_tag }}",
+            "rolledBack": true,
+            "images": {
+              "backend": "{{ backend_image }}",
+              "frontend": "{{ frontend_image }}",
+              "bot": "{{ bot_image }}"
+            }
+          }
