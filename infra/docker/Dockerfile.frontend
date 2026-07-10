@@ -31,7 +31,7 @@ RUN pnpm exec turbo run build --filter=@app/frontend
 # ---- runner: non-root nginx serving the SPA ---------------------------------
 # nginx-unprivileged runs as UID 101 and listens on 8080 (no root, no
 # CAP_NET_BIND_SERVICE), which lets the container run read-only + no-new-privileges.
-FROM nginxinc/nginx-unprivileged:1.27-alpine AS runner
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS runner
 # Patch OS packages (openssl/libexpat/libpng/c-ares/…) to the latest alpine 3.21
 # security releases — the pinned base tag lags newly-published CVE fixes, and the
 # Trivy gate blocks on fixable HIGH/CRITICAL. Runs as root, then drops back to the
