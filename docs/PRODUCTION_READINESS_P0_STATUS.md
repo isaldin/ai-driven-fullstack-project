@@ -3,6 +3,17 @@
 Companion to [`PRODUCTION_READINESS_P0.md`](./PRODUCTION_READINESS_P0.md). Maps every Definition-of-Done
 item to what was implemented and how it was verified.
 
+> **CI verified on GitHub Actions (2026-07-10):** the full `ci.yml` workflow is green end-to-end on the
+> canonical runner — all 10 jobs pass ([PR #2](https://github.com/isaldin/ai-driven-fullstack-project/pull/2),
+> run `29108638144`, commit `7fd31c0`). Runner verification caught and fixed two real, runner-only bugs that
+> dev-machine checks had masked: (1) the backup drill's `pg_dump` client/server major mismatch — the runner's
+> apt `postgresql-client` is older than the `postgres:17` service, so it now installs `postgresql-client-17`
+> from PGDG; (2) the migration gates built the backend without its workspace deps (`pnpm --filter @app/backend
+> build` bypassed Turbo's `^build`, so `@app/config` et al. weren't compiled), now built via
+> `pnpm exec turbo run build --filter=@app/backend`. The earlier "migration engine" hypothesis was a red
+> herring — `zen migrate deploy` itself always passed. Trivy surfaced real fixable CVEs (frontend alpine libs
+> → `apk upgrade`; `picomatch`/`sigstore` inside the bundled pnpm CLI → two 30-day justified exceptions).
+
 **Legend**
 - ✅ **Verified** — executed here with real evidence (tests, drills, real Postgres/containers, syntax/config validation).
 - 🧪 **CI-runner** — implemented + all invoked scripts locally proven; the workflow itself must run once on a
@@ -16,8 +27,8 @@ item to what was implemented and how it was verified.
 
 | DoD item | Status | Evidence |
 | --- | --- | --- |
-| CI creates DB only via committed `zen migrate deploy`, then smoke/e2e | ✅ | `ci.yml` job `migration-fresh`; run locally against real Postgres: deploy → `zen migrate status` "up to date" → `db:smoke` (User+AuditLog round-trip) all green |
-| CI upgrades previous-release DB to current + smoke | 🧪 | `ci.yml` `migration-upgrade` + `scripts/migration-upgrade-gate.mjs` (checkout prev migrations → apply → restore current → apply → status). Sub-commands verified; full run needs a runner with git history |
+| CI creates DB only via committed `zen migrate deploy`, then smoke/e2e | ✅ | `ci.yml` job `migration-fresh`, green on GitHub Actions run `29108638144`: deploy → `zen migrate status` "up to date" → `db:smoke` (User+AuditLog round-trip) |
+| CI upgrades previous-release DB to current + smoke | ✅ | `ci.yml` `migration-upgrade` + `scripts/migration-upgrade-gate.mjs`; green on GitHub Actions run `29108638144` (deploy prev → restore current → apply → `zen migrate status` → `db:smoke`) |
 | Removed/invalid migration turns CI red | ✅ | Verified locally: invalid SQL → `db:migrate` exit 1; removed migration → `db:smoke` exit 1 (AuditLog table missing) |
 | Production deploy uses CI-built image digests | ✅/🚀 | `deploy.yml` pulls `backend_image`/`frontend_image`/`bot_image` (`…@sha256:…`); preflight rejects non-digest images (tested). Real digests come from a `release.yml` run |
 | No `git clone` / `docker compose build` on the VPS | ✅ | `deploy.yml` copies compose/config via `copy` + `docker compose pull`; grep confirms no `ansible.builtin.git` / build task |
@@ -79,7 +90,7 @@ item to what was implemented and how it was verified.
 | No `multer@2.1.1`; resolved `>=2.2.0` | ✅ | Lockfile shows single `multer@2.2.0`; `pnpm.overrides` floor + `@nestjs/platform-express@11.1.28` |
 | Unit/backend-e2e/frontend-e2e pass after update | ✅ | Unit 45, backend e2e 22, frontend e2e 7 — all green |
 | Intentional vulnerable dep makes audit red | 🧪 | `audit-ci.mjs` filters by severity & honours exceptions; logic proven; a fixture PR run confirms on a runner |
-| Trivy non-zero on fixable HIGH/CRITICAL, blocks merge/release | 🧪 | `ci.yml` `docker-images` gate: `exit-code: '1'`, no `continue-on-error`, `.trivyignore` from exceptions |
+| Trivy non-zero on fixable HIGH/CRITICAL, blocks merge/release | ✅ | Demonstrated end-to-end on GitHub Actions: run 1 blocked real fixable HIGH/CRITICAL (frontend 35, backend/bot 2 each); run 2 green after `apk upgrade` + time-boxed exceptions. `exit-code: '1'`, no `continue-on-error`, `.trivyignore` from exceptions |
 | SARIF uploads even when the gate fails | ✅ | Separate SARIF step `if: ${{ !cancelled() }}` + `continue-on-error` |
 | Unfixed high/critical blocks OR has non-expired exception | ✅ | `.security/exceptions.yaml` + validator wired into audit + `.trivyignore` |
 | CI rejects exception w/o owner/reason/expiry or expired | ✅ | Verified: missing fields, expired, >30d high all → exit 1; valid → exit 0 |
@@ -99,9 +110,10 @@ item to what was implemented and how it was verified.
 These are implemented and locally sound but, by nature, need a real GitHub-Actions-compatible runner and/or
 a real VPS + registry + staging to sign off:
 
-1. **Full CI run** on a runner — run `infra/ci-local/ci-local.sh run` (stop the local Postgres on 5432 first)
-   or push to GitHub, to confirm all jobs (audit, secret-scan, migration-fresh/upgrade, backup-drill,
-   blocking Trivy, e2e) go green end-to-end.
+1. ~~**Full CI run** on a runner~~ — ✅ **DONE (2026-07-10):** all 10 `ci.yml` jobs green on GitHub Actions
+   (PR #2, run `29108638144`, commit `7fd31c0`) — audit, secret-scan, migration-fresh/upgrade, backup-drill,
+   blocking Trivy (×3), typecheck·lint·test·build·backend-e2e, and frontend e2e. Two runner-only bugs were
+   caught and fixed in the process (backup `pg_dump` client major; migration-gate workspace-dep build).
 2. **A real `release.yml` run** on a tag → produces signed digests + SBOM + manifest.
 3. **A staging deploy → smoke → promote → production deploy** with those digests.
 4. **Live drills**: TLS issuance/renewal (staging ACME), off-host encrypted backup + monthly restore drill,
