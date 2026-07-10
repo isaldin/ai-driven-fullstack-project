@@ -1,0 +1,34 @@
+# gitleaks configuration for the template.
+#
+# Extends the built-in ruleset and allowlists ONLY this template's intentional
+# placeholder / test-fixture values. A brand-new, real-looking secret — even in a
+# test file — still trips the gate, because the allowlist matches specific known
+# strings, not whole directories.
+title = "template gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Template placeholders and committed test fixtures (never real secrets)."
+# Known non-secret example files + build output (gitignored, regenerated).
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)vault\.example\.yml$''',
+  '''(^|/)dist/''',
+]
+# Specific placeholder / test-token shapes shipped in this repo. Kept narrow on
+# purpose: a new secret that doesn't match one of these is NOT allowlisted.
+regexes = [
+  '''change-me[-A-Za-z0-9]*''',
+  '''REPLACE_WITH[_A-Z0-9+]*''',
+  '''(000000|123456):[A-Za-z0-9_-]*[Bb]otfather[A-Za-z0-9_-]*''',
+  '''ChangeMe123!''',
+  # base64("admin@example.com:ChangeMe123!") — the observability demo auth header.
+  '''YWRtaW5AZXhhbXBsZS5jb206Q2hhbmdlTWUxMjMh''',
+  # Deterministic e2e/test secrets (see apps/*/e2e, vitest.config.e2e.ts).
+  '''(test|e2e)-(access|refresh|service)-(secret|token)[-A-Za-z0-9]*''',
+  # Local throwaway Postgres/Redis creds used across dev compose & tests.
+  '''postgres:postgres@''',
+  '''app:change-me@''',
+]

@@ -1,0 +1,40 @@
+---
+# PostgreSQL off-host backup role. Installs the backup + restore-drill scripts and
+# systemd timers. See docs/runbooks/BACKUP_RESTORE.md.
+
+manage_backups: true
+
+backup_dir: "{{ app_dir }}/backups-work" # local staging only; encrypted copies go off-host
+backup_label: app
+
+# Connection to back up (defaults to the in-network Postgres). Provide via vault.
+backup_database_url: "{{ vault_database_url | default('') }}"
+
+# Off-host destination: an s3://bucket/prefix (recommended) or an absolute dir on
+# a SEPARATE mounted volume/host. Never the same disk as the DB.
+backup_dest: "s3://your-bucket/app-backups"
+
+# Public recipient cert used to encrypt. The matching PRIVATE key must live
+# OFF this host (that is the whole point). Generate with:
+#   openssl req -x509 -newkey rsa:4096 -nodes -keyout private.pem -out cert.pem -days 3650 -subj "/CN=app-backup"
+# then copy ONLY cert.pem here.
+backup_recipient_cert: "{{ app_dir }}/backup-recipient.pem"
+
+# Retention (grandfather-father-son).
+retention_daily: 7
+retention_weekly: 4
+retention_monthly: 6
+
+# Alerting: a webhook that receives a JSON POST when a backup fails.
+backup_alert_webhook: ""
+
+# Schedules (systemd OnCalendar syntax).
+backup_schedule: "*-*-* 02:30:00" # nightly 02:30
+drill_schedule: "*-*-01 04:00:00" # 1st of each month 04:00
+
+# The isolated DB the monthly drill restores into (dropped/recreated each run).
+drill_restore_database_url: "postgresql://postgres:postgres@postgres:5432/app_restore_drill"
+# The recipient PRIVATE key for the drill. Only where the drill runs; still must
+# NOT be the plain backup source. Left empty by default (the drill is skipped
+# until you provide it) — see the runbook.
+drill_private_key: ""

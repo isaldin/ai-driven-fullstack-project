@@ -1,104 +1,184 @@
 # ─────────────────────────────────────────────────────────────
-# Full-stack deployment for the AI-ready monorepo template.
+# PRODUCTION base stack (single-VPS profile).
 #
-# Run from the repo root. Two modes, and they differ on --env-file:
+# This file is production-hardened by default:
+#   - only Caddy publishes host ports (80/443); everything else uses `expose`;
+#   - Postgres/Redis are NOT published to the host at all;
+#   - three segmented networks (edge / app_internal / observability_internal),
+#     the two internal ones marked `internal: true` (no direct egress);
+#   - every stateless container: non-root, cap_drop ALL, no-new-privileges,
+#     tmpfs, pinned image, resource + PID limits, bounded json-file logging;
+#   - NODE_ENV=production + DEPLOYMENT_MODE=compose, so @app/config rejects
+#     placeholders / localhost.
 #
-#   LOCAL (throwaway) — NO --env-file. The inline defaults below wire services by in-network name
-#   (postgres/redis/otel-collector) and use `change-me` secrets — what a local spin wants. The repo-root
-#   .env/.env.example is HOST-oriented (DATABASE_URL=…@localhost, for `pnpm dev`); passing it here with
-#   --env-file overrides the in-network hosts and the backend crash-loops looking for Postgres at
-#   localhost inside its own container. Enable observability via a shell var:
-#     docker compose -f infra/docker/docker-compose.yml up -d --build
-#     OTEL_SDK_DISABLED=false docker compose -f infra/docker/docker-compose.yml --profile observability up -d
+# For LOCAL development, layer the dev override, which republishes ports, builds
+# locally, disables Caddy and relaxes NODE_ENV back to development:
+#   docker compose -f infra/docker/docker-compose.yml \
+#                  -f infra/docker/docker-compose.dev.yml up -d --build
 #
-#   PRODUCTION — Ansible renders a CONTAINER-oriented .env (service-name hosts + real vault secrets) and
-#   passes --env-file, so ${VAR} interpolation (published ports, `environment:` secrets, the frontend
-#   VITE_API_URL build arg) resolves from that file (NOT the repo root automatically). Never deploy
-#   without it or you ship the `change-me` defaults below. Use `pnpm deploy:vps`, don't hand-run compose
-#   against a public host. The `observability` profile (OpenTelemetry Collector + OpenObserve — the OTLP
-#   metrics/traces/logs backend) is OFF by default; add `--profile observability`.
+# For PRODUCTION, Ansible renders a container-oriented .env (real secrets +
+# service-name hosts) and runs `--env-file .env --profile edge up -d`
+# (add `--profile observability` for telemetry). See infra/ansible/deploy.yml.
 #
-# Build context is the repo root (../..); Dockerfiles live under infra/docker/.
-#
-# Resource limits below are conservative starting points — tune per host. They
-# apply to `docker compose up` (Compose v2 honours deploy.resources.limits).
+# Image references: this base BUILDS from source by default so a fresh clone runs.
+# A real release pins immutable digests via the release manifest overlay
+# (infra/docker/docker-compose.release.yml) — see docs/runbooks/ROLLBACK.md.
 # ─────────────────────────────────────────────────────────────
 
 name: app
 
+# Shared bounded logging so a chatty container can't fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# Baseline hardening for stateless services.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  init: true
+  stop_grace_period: 20s
+
+networks:
+  # Public routing plane + the only place with host-published ports (Caddy).
+  edge:
+    driver: bridge
+  # Application data plane. internal:true => no route to the internet. Postgres
+  # and Redis live ONLY here, so the frontend (edge only) cannot reach them.
+  app_internal:
+    driver: bridge
+    internal: true
+  # Telemetry data plane. Collector + OpenObserve live ONLY here.
+  observability_internal:
+    driver: bridge
+    internal: true
+
 services:
+  # ---- Reverse proxy / TLS (public edge) -----------------------------------
+  # Automatic ACME certificates + HTTP->HTTPS + security headers. Only enabled
+  # with the `edge` profile (prod); local dev talks to services directly.
+  caddy:
+    image: caddy:2.10-alpine
+    profiles: ["edge"]
+    restart: unless-stopped
+    <<: *hardening
+    # Caddy binds 80/443 as non-root via the one capability it needs.
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-app.example.com}
+      API_DOMAIN: ${API_DOMAIN:-api.example.com}
+      OBSERVE_DOMAIN: ${OBSERVE_DOMAIN:-observe.example.com}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+      # Public browser OTLP: leave empty to keep the collector fully internal.
+      ENABLE_BROWSER_OTLP: ${ENABLE_BROWSER_OTLP:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    networks:
+      - edge
+      - observability_internal
+    depends_on:
+      - frontend
+      - backend
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+          pids: 200
+
   # ---- Postgres ------------------------------------------------------------
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-app}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      # Loopback only: in prod the app reaches Postgres over the compose network
-      # by service name, so it must never be published on the public host (Docker's
-      # iptables rules commonly bypass UFW). Only local host-run dev needs this.
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    # No published ports in production: reachable only over app_internal by name.
+    networks:
+      - app_internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-app}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 1g
           cpus: "1.0"
+          pids: 200
 
   # ---- Redis ---------------------------------------------------------------
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
-      # requirepass is enabled only when REDIS_PASSWORD is set. If you set it,
-      # keep REDIS_URL in sync: redis://:<password>@redis:6379. Empty by default
-      # so local dev needs no secret.
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-    # $$ defers expansion to the container shell (Compose turns $$ into $), so the
-    # optional --requirepass is applied from the container's own REDIS_PASSWORD.
     command: ["sh", "-c", "exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass \"$$REDIS_PASSWORD\"}"]
     volumes:
       - redis_data:/data
-    ports:
-      # Loopback only (see postgres); prod reaches Redis by service name.
-      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    networks:
+      - app_internal
     healthcheck:
       test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 5s
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 256m
           cpus: "0.5"
+          pids: 100
 
   # ---- Backend (NestJS API) ------------------------------------------------
   backend:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.backend
+    image: ${BACKEND_IMAGE:-app-backend:local}
     restart: unless-stopped
+    <<: *hardening
+    # read_only is intentionally OFF for the backend: the boot command runs
+    # `zen migrate deploy` (Prisma migration engine + pnpm) which writes temp
+    # state. Documented exception — see docs/runbooks/HOST_HARDENING.md. All
+    # other hardening still applies.
     env_file:
       - path: ../../.env
         required: false
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-compose}
       BACKEND_PORT: ${BACKEND_PORT:-3000}
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/app}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change-me-access-secret-min-32-chars-long}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-refresh-secret-min-32-chars-long}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-900}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-1209600}
       SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:-change-me-service-token}
@@ -107,19 +187,20 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-app-backend}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
-      # Keep verbose per-middleware Express spans off by default (one HTTP span per request).
       OTEL_VERBOSE_SPANS: ${OTEL_VERBOSE_SPANS:-false}
-      # Traces + metrics go to the collector (no OpenObserve credentials in the app).
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       METRICS_EXPORTER: ${METRICS_EXPORTER:-otlp}
       SENTRY_DSN: ${SENTRY_DSN:-}
-    # Apply migrations, then start the server. `zen migrate deploy` is safe to
-    # run on every boot (no-op when already up to date).
     command: >
       sh -c "pnpm --filter @app/backend db:migrate && node apps/backend/dist/main.js"
-    ports:
-      - "${BACKEND_PORT:-3000}:3000"
+    # No host ports in production: Caddy reaches the backend over `edge` by name.
+    expose:
+      - "3000"
+    networks:
+      - edge
+      - app_internal
+      - observability_internal
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,42 +216,61 @@ services:
       timeout: 5s
       retries: 5
       start_period: 40s
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 768m
           cpus: "1.0"
+          pids: 300
 
-  # ---- Frontend (static SPA via nginx) -------------------------------------
+  # ---- Frontend (static SPA via non-root nginx) ----------------------------
   frontend:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.frontend
       args:
-        # Baked into the bundle at build time.
         VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+    image: ${FRONTEND_IMAGE:-app-frontend:local}
     restart: unless-stopped
-    ports:
-      - "${FRONTEND_PORT:-8080}:80"
+    <<: *hardening
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    # nginx-unprivileged listens on 8080 as non-root. Caddy routes here over edge.
+    expose:
+      - "8080"
+    networks:
+      - edge
     depends_on:
       - backend
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 128m
           cpus: "0.5"
+          pids: 100
 
   # ---- Telegram bot (long-polling worker) ----------------------------------
   telegram-bot:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.bot
+    image: ${BOT_IMAGE:-app-telegram-bot:local}
     restart: unless-stopped
+    <<: *hardening
+    read_only: true
+    tmpfs:
+      - /tmp
     env_file:
       - path: ../../.env
         required: false
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-compose}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-000000:replace-with-botfather-token}
       BACKEND_URL: ${BACKEND_URL:-http://backend:3000}
       SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:-change-me-service-token}
@@ -179,72 +279,85 @@ services:
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-app-telegram-bot}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+    # edge -> Telegram egress; app_internal -> backend + redis; observability_internal -> collector.
+    networks:
+      - edge
+      - app_internal
+      - observability_internal
     depends_on:
       backend:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 256m
           cpus: "0.5"
+          pids: 200
 
   # ---- OpenObserve (optional OTLP backend) ---------------------------------
-  # Metrics / traces / logs sink. Disabled unless the `observability` profile
-  # is enabled. UI + OTLP HTTP on :5080.
   openobserve:
-    image: public.ecr.aws/zinclabs/openobserve:latest
+    image: public.ecr.aws/zinclabs/openobserve:v0.14.7
     profiles: ["observability"]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       ZO_ROOT_USER_EMAIL: ${ZO_ROOT_USER_EMAIL:-admin@example.com}
       ZO_ROOT_USER_PASSWORD: ${ZO_ROOT_USER_PASSWORD:-ChangeMe123!}
       ZO_DATA_DIR: /data
     volumes:
       - openobserve_data:/data
-    ports:
-      - "${OPENOBSERVE_PORT:-5080}:5080"
-    # No healthcheck: the OpenObserve image is distroless (no shell/curl/wget), so an
-    # in-container HTTP probe can't run. Consumers (the collector) tolerate it not being
-    # ready yet by retrying their exports.
+    # No published port in production: reachable via Caddy (observe.DOMAIN) only.
+    expose:
+      - "5080"
+    networks:
+      - observability_internal
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 512m
           cpus: "0.5"
+          pids: 200
 
   # ---- OpenTelemetry Collector (single OTLP egress + log tailer) ------------
-  # Receives traces/metrics from the app over OTLP, tails container stdout for logs
-  # (promoting trace_id/span_id so logs correlate with traces in OpenObserve), and
-  # forwards all three to OpenObserve. Only started with the `observability` profile.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.114.0
     profiles: ["observability"]
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     # Root so the filelog receiver can read the (root-owned) Docker container logs.
     user: "0:0"
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     environment:
-      # base64("<ZO_ROOT_USER_EMAIL>:<ZO_ROOT_USER_PASSWORD>") — regenerate if you change
-      # the OpenObserve root credentials above.
       OPENOBSERVE_AUTH_HEADER: ${OPENOBSERVE_AUTH_HEADER:-Basic YWRtaW5AZXhhbXBsZS5jb206Q2hhbmdlTWUxMjMh}
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
-      # Read-only access to container stdout logs for the filelog receiver.
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    ports:
-      - "${OTEL_COLLECTOR_PORT:-4318}:4318"
+    # No published OTLP port in production: browser OTLP (if enabled) goes through
+    # Caddy's rate-limited /otlp endpoint; app services reach it over the network.
+    expose:
+      - "4318"
+    networks:
+      - observability_internal
     depends_on:
       openobserve:
         condition: service_started
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 256m
           cpus: "0.5"
+          pids: 200
 
 volumes:
   postgres_data:
   redis_data:
   openobserve_data:
+  caddy_data:
+  caddy_config:

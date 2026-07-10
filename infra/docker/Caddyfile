@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────
+# Caddy reverse proxy — automatic ACME TLS + security headers for the
+# single-VPS profile. Domains come from the environment (rendered by Ansible):
+#   APP_DOMAIN      -> frontend SPA
+#   API_DOMAIN      -> backend API
+#   OBSERVE_DOMAIN  -> OpenObserve UI (extra access control recommended)
+#   ACME_EMAIL      -> Let's Encrypt account email
+#   ENABLE_BROWSER_OTLP -> when "true", exposes a locked-down /otlp ingest path
+#
+# Caddy redirects HTTP->HTTPS and manages/renews certificates automatically.
+# ─────────────────────────────────────────────────────────────
+
+{
+	email {$ACME_EMAIL}
+	# Uncomment to test issuance/renewal without hitting Let's Encrypt rate limits:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+# Reusable security-header snippet (applied per-site after TLS).
+(security_headers) {
+	header {
+		# HSTS: only meaningful over HTTPS (Caddy serves these sites via TLS).
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		X-Frame-Options "DENY"
+		# Caddy adds its own Server header value; drop version noise.
+		-Server
+	}
+}
+
+# ---- Frontend SPA ----------------------------------------------------------
+{$APP_DOMAIN} {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy frontend:8080
+}
+
+# ---- Backend API -----------------------------------------------------------
+{$API_DOMAIN} {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy backend:3000
+}
+
+# ---- OpenObserve UI (telemetry) --------------------------------------------
+# Publicly resolvable but should carry additional access control (basic auth /
+# IP allowlist / SSO). Uncomment and set a bcrypt hash to require basic auth:
+#   basicauth { observer JDJhJDE0... }
+{$OBSERVE_DOMAIN} {
+	import security_headers
+	reverse_proxy openobserve:5080
+}
+
+# ---- Browser OTLP ingest (opt-in) ------------------------------------------
+# Only routed when ENABLE_BROWSER_OTLP=true. Locked down: strict CORS allowlist
+# (the app origin), a small request-body cap and per-IP rate limiting, so a
+# public collector can't be used to flood telemetry storage.
+{$API_DOMAIN}/otlp/* {
+	@browser_otlp expression {$ENABLE_BROWSER_OTLP} == "true"
+	handle @browser_otlp {
+		import security_headers
+		request_body {
+			max_size 256KB
+		}
+		header {
+			Access-Control-Allow-Origin "https://{$APP_DOMAIN}"
+			Access-Control-Allow-Methods "POST, OPTIONS"
+			Access-Control-Allow-Headers "content-type, traceparent, tracestate"
+			Access-Control-Max-Age "86400"
+		}
+		@preflight method OPTIONS
+		respond @preflight 204
+		reverse_proxy otel-collector:4318 {
+			# Strip the /otlp prefix before forwarding to the collector.
+			rewrite /v1{uri.path.1}
+		}
+	}
+	# Feature disabled -> not found (collector stays fully internal).
+	handle {
+		respond 404
+	}
+}

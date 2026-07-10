@@ -1,0 +1,26 @@
+# ─────────────────────────────────────────────────────────────
+# Security exceptions allowlist (machine-readable).
+#
+# Each entry temporarily waives ONE advisory for the dependency-audit and image
+# scan gates. Rules enforced by scripts/check-security-exceptions.mjs (run in CI):
+#   - every field below is required and non-empty;
+#   - `created` and `expires` are YYYY-MM-DD;
+#   - `expires` is in the future (an expired exception fails CI);
+#   - a HIGH/CRITICAL exception may not exceed 30 days from `created`;
+#   - no open-ended / indefinite exceptions.
+#
+# An exception is a stop-gap, not a fix. Prefer upgrading the dependency. When an
+# entry expires the gate goes red again — that is the point.
+#
+# Schema (one list item per waived advisory):
+#   - advisory: GHSA-xxxx-xxxx-xxxx        # advisory / CVE id
+#     component: package-or-image@range    # what it applies to
+#     severity: high                       # critical | high | moderate | low
+#     reason: not reachable because ...     # why it is safe for now
+#     compensating_controls: ...            # what limits the risk meanwhile
+#     owner: team-or-person                 # who owns closing it
+#     created: 2026-07-10
+#     expires: 2026-08-09                   # <= created + 30d for high/critical
+#
+# The template ships with NO active exceptions.
+exceptions: []

@@ -9,11 +9,13 @@
 # Never commit the decrypted file. See README.md.
 # ─────────────────────────────────────────────────────────────
 
+# Generate secrets with a CSPRNG — e.g. `openssl rand -base64 48`. Never reuse a
+# value across two variables (the @app/config validator rejects duplicates), and
+# never leave a REPLACE_WITH_* placeholder (the deploy preflight rejects those).
 vault_postgres_password: "REPLACE_WITH_STRONG_PASSWORD"
 vault_database_url: "postgresql://app:REPLACE_WITH_STRONG_PASSWORD@postgres:5432/app"
 vault_jwt_access_secret: "REPLACE_WITH_32+_CHAR_RANDOM_SECRET"
-vault_jwt_refresh_secret: "REPLACE_WITH_32+_CHAR_RANDOM_SECRET"
-vault_service_api_token: "REPLACE_WITH_RANDOM_TOKEN"
+vault_service_api_token: "REPLACE_WITH_32+_CHAR_RANDOM_TOKEN"
 vault_telegram_bot_token: "123456:REPLACE_WITH_BOTFATHER_TOKEN"
 vault_redis_url: "redis://redis:6379"
 vault_sentry_dsn: ""

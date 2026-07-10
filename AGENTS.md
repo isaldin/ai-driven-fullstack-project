@@ -72,11 +72,22 @@ pnpm test               # unit tests (all workspaces)
 pnpm --filter @app/backend test:e2e   # backend e2e (needs a Postgres; auto-creates & pushes the schema)
 pnpm --filter @app/frontend test:e2e  # frontend Playwright e2e (needs a Postgres + a prior `pnpm build`)
 pnpm db:migrate:dev     # create+apply a dev migration
-pnpm db:seed            # seed an admin user (admin@example.com / admin12345)
-pnpm docker:up          # start local postgres + redis
-pnpm deploy:vps         # ansible deploy to a VPS
-pnpm skills:install     # install the agent skills
+SEED_ADMIN_EMAIL=… SEED_ADMIN_PASSWORD=… pnpm bootstrap-admin   # create first admin (no defaults; idempotent)
+pnpm docker:up          # start local postgres + redis (dev overlay: published ports)
+pnpm docker:dev         # full local stack (base + dev overlay; NODE_ENV=development, no Caddy)
+pnpm deploy:vps         # ansible deploy to a VPS (pull-by-digest; -e deployment_environment=production for prod)
+pnpm deploy:rollback    # roll back to a previous release's image digests
+pnpm skills:install     # install the agent skills (integrity-checked against skills-lock.json)
+pnpm skills:verify      # verify installed skills against skills-lock.json
+node scripts/audit-ci.mjs                   # dependency audit gate (>= high, honours .security/exceptions.yaml)
+node scripts/check-security-exceptions.mjs  # validate the security exception allowlist
 ```
+
+Security gates run in CI (`.github/workflows/ci.yml`): dependency audit, gitleaks secret scan, blocking
+Trivy image scan, fresh/upgrade migration gates, and a self-contained backup/restore drill. The release
+pipeline (`.github/workflows/release.yml`) builds each image once, pushes by digest, attaches SBOM +
+SLSA provenance, cosign-signs, and emits a release manifest. See [`docs/SECURITY.md`](./docs/SECURITY.md)
+and the runbooks under `docs/runbooks/`.
 
 Local prerequisites: a running Postgres reachable via `DATABASE_URL` (use `pnpm docker:up`).
 Copy `.env.example` to `.env` first.
@@ -151,24 +162,33 @@ repo Actions variables it sets are what container-based runners need but GitHub-
 
 ## Deploy & CI — operational invariants (verified; easy to break)
 
-These were verified end-to-end (live Compose deploy on a simulated VPS + a green CI run on a
-GitHub-Actions-compatible runner). Keep them intact:
+Keep these intact:
 
-- **`--env-file` is for prod (a *container-oriented* `.env`), not the host `.env.example`.** `docker
-  compose` interpolates `${VAR}` (published ports, `environment:` secrets, the frontend `VITE_API_URL`
-  build arg) from `--env-file`/the shell, NOT the repo root, and `environment:` entries default to
-  in-network service names (`${DATABASE_URL:-…@postgres:5432/…}`, redis, otel-collector). The Ansible
-  deploy (`infra/ansible/deploy.yml`) renders a container-oriented `.env` (service-name hosts + real vault
-  secrets) and passes `--env-file` — that's the path the `change-me`-fallback warning is about (never
-  deploy without it). But the repo-root `.env`/`.env.example` is **host-oriented** (`localhost` hosts, for
-  `pnpm dev`): passing *that* to the container stack with `--env-file` overrides the in-network defaults
-  and the backend crash-loops looking for Postgres at `localhost:5432` inside its own container. So for a
-  **local** container run, omit `--env-file` (Compose's in-network defaults + throwaway `change-me`
-  secrets are right for a throwaway stack); enable observability via a shell var (`OTEL_SDK_DISABLED=false
-  docker compose … up`). See README Deployment and `docs/OBSERVABILITY.md` "Turn it on".
-- **`BACKEND_PORT` maps host→container `3000`** (`"${BACKEND_PORT:-3000}:3000"`) and the app listens on
-  `BACKEND_PORT` inside the container. Only `3000` keeps the published and listen ports aligned; you can
-  remap the postgres/redis/frontend host ports freely, but leave backend at `3000` (or change both sides).
+- **Compose is split into a production base + a dev overlay.** `infra/docker/docker-compose.yml` is
+  production-hardened: Caddy (the only host-published ports, 80/443, behind the `edge` profile), everything
+  else on `expose`, three segmented networks (`edge` / `app_internal` / `observability_internal`, the two
+  internal ones `internal: true`), non-root + `cap_drop: ALL` + `no-new-privileges` + read-only rootfs
+  (backend excepted — it runs `zen migrate deploy` at boot) + pinned images (no `:latest`), and
+  `NODE_ENV=production` + `DEPLOYMENT_MODE=compose`. For **local** dev, layer the overlay:
+  `docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml up -d --build`
+  (`pnpm docker:dev`) — it republishes Postgres/Redis/backend/frontend on the host and flips
+  `NODE_ENV=development` + `DEPLOYMENT_MODE=standalone` so `@app/config`'s production checks (no
+  placeholders, HTTPS origins, no localhost) don't fire on a throwaway stack.
+- **`@app/config` fails fast in production.** With `NODE_ENV=production` it rejects template placeholders,
+  secrets < 32 chars, duplicated secrets, non-HTTPS `CORS_ORIGIN`, `localhost` under compose mode, and
+  boolean typos. So the local throwaway stack MUST run under the dev overlay (development), not the bare
+  production base. There is no `JWT_REFRESH_SECRET` (refresh tokens are opaque + DB-hashed).
+- **Production deploys pull immutable digests — the VPS never clones or builds.** The release workflow
+  builds each image once, pushes by digest (GHCR), signs (cosign) and records a manifest. `infra/ansible/
+  deploy.yml` COPIES the compose/config files to the host, renders a container-oriented `.env` (service-name
+  hosts + real vault secrets, `--env-file`), verifies signatures, then `docker compose pull`s the digests
+  in `group_vars` (`backend_image`/`frontend_image`/`bot_image`, each `…@sha256:…`). A real prod deploy must
+  pass `-e deployment_environment=production`; `infra/ansible/preflight.yml` then rejects `repo_version`
+  branches, non-digest images, `example.com`, placeholder/weak secrets, and Redis-auth mismatches BEFORE
+  any server mutation. Rollback = `pnpm deploy:rollback` with the previous release's digests.
+- **`BACKEND_PORT` maps host→container `3000`** and the app listens on `BACKEND_PORT` inside the container.
+  Only `3000` keeps published and listen ports aligned (dev overlay); leave backend at `3000` (or change
+  both sides).
 - **Migrations are committed; the generated client is not.** `apps/backend/src/zenstack/migrations/` is
   tracked — a real deploy runs `zen migrate deploy` off it, and without it the prod DB gets no tables.
   Only `src/zenstack/{schema,models,input}.ts` + `~schema.prisma` are gitignored. Do not gitignore the

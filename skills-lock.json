@@ -5,109 +5,127 @@
       "source": "aj-geddes/useful-ai-prompts",
       "sourceType": "github",
       "skillPath": "skills/ansible-automation/SKILL.md",
-      "computedHash": "2f6b7fc42258730ea802f64f80c63ba140e3a601c25b9423babe9ab61b140b21"
+      "computedHash": "2f6b7fc42258730ea802f64f80c63ba140e3a601c25b9423babe9ab61b140b21",
+      "sha256": "6970e3f522bf3763f6d96cbe0654588804c83dc5de84b22ed93d6cb414f41f70"
     },
     "architecture-designer": {
       "source": "jeffallan/claude-skills",
       "sourceType": "github",
       "skillPath": "skills/architecture-designer/SKILL.md",
-      "computedHash": "ecb729710037e01080fd2c342f37d2c25b3597bec70b8d529f9604abd8ccc142"
+      "computedHash": "ecb729710037e01080fd2c342f37d2c25b3597bec70b8d529f9604abd8ccc142",
+      "sha256": "5235b031e8fadacf01f39ad9db7b8d5ec9d6f83460ebcef78da95d31c9f36276"
     },
     "backend-development": {
       "source": "mrgoonie/claudekit-skills",
       "sourceType": "github",
       "skillPath": ".claude/skills/backend-development/SKILL.md",
-      "computedHash": "19a6a72ddb96062c3edef801451bd721726dd571f7db221f0b4d83ad70aad114"
+      "computedHash": "19a6a72ddb96062c3edef801451bd721726dd571f7db221f0b4d83ad70aad114",
+      "sha256": "68e7dbc0221c393bcbfaa1a6c660e210c3d511a7a8f47f59cb25e7b9786ac510"
     },
     "clean-ddd-hexagonal": {
       "source": "ccheney/robust-skills",
       "sourceType": "github",
       "skillPath": "skills/clean-ddd-hexagonal/SKILL.md",
-      "computedHash": "223df951adb9adf655b139221d4a3b68a314f5a0c24c8bc137a754ce9dee5713"
+      "computedHash": "223df951adb9adf655b139221d4a3b68a314f5a0c24c8bc137a754ce9dee5713",
+      "sha256": "d935f836395875130327e758c2904ba0f5f51142fbf25d3c298bb6904d4a4bbd"
     },
     "devops-engineer": {
       "source": "jeffallan/claude-skills",
       "sourceType": "github",
       "skillPath": "skills/devops-engineer/SKILL.md",
-      "computedHash": "6de5e562151fe9c227234e81bdc1e647066d6b1822463eadf296a5344b47e35a"
+      "computedHash": "6de5e562151fe9c227234e81bdc1e647066d6b1822463eadf296a5344b47e35a",
+      "sha256": "48824f5f4de1181d2b6ec0051f36536108bb30b55ea68aac90efb88ebb28972b"
     },
     "github-actions-docs": {
       "source": "xixu-me/skills",
       "sourceType": "github",
       "skillPath": "skills/github-actions-docs/SKILL.md",
-      "computedHash": "e9ac24e79715ef3060bd4ae376052f8d863b830604e69cb513b39764bf47ee53"
+      "computedHash": "e9ac24e79715ef3060bd4ae376052f8d863b830604e69cb513b39764bf47ee53",
+      "sha256": "85f3e313505340d09f6c5706aac096a29ff30a0ef11c04ce7a466a57175df33f"
     },
     "nestjs-best-practices": {
       "source": "kadajett/agent-nestjs-skills",
       "sourceType": "github",
       "skillPath": "SKILL.md",
-      "computedHash": "fff896300fe25d6d2e41161da12a5b05d0d57a8adb2390c72fbb7a72e0d02440"
+      "computedHash": "fff896300fe25d6d2e41161da12a5b05d0d57a8adb2390c72fbb7a72e0d02440",
+      "sha256": "b699d2245ddc6b6cdd08d86db0a89903556dc33138acb2d34645b5c2fb319219"
     },
     "nodejs-backend-patterns": {
       "source": "wshobson/agents",
       "sourceType": "github",
       "skillPath": "plugins/javascript-typescript/skills/nodejs-backend-patterns/SKILL.md",
-      "computedHash": "b63b54d09c77cec0e84cdd42424c12909785f14bdb286c835c45420b885ff1f3"
+      "computedHash": "b63b54d09c77cec0e84cdd42424c12909785f14bdb286c835c45420b885ff1f3",
+      "sha256": "d52e1150accdc27e916f0962c9ba0872fcbe8a7d849d905dcc795c0f9d05aeae"
     },
     "otel-collector": {
       "source": "dash0hq/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/otel-collector/SKILL.md",
-      "computedHash": "b7d40afc945e4e5a97e2f671b4cae440896303b93ee15290285fbf7e27b27c5e"
+      "computedHash": "b7d40afc945e4e5a97e2f671b4cae440896303b93ee15290285fbf7e27b27c5e",
+      "sha256": "8f24bb585390052386df4b682b82fa04beab39c1202932e1fba195114df3c919"
     },
     "otel-instrumentation": {
       "source": "dash0hq/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/otel-instrumentation/SKILL.md",
-      "computedHash": "f34dc69178aaa4c6d91e54de54c1a98f8bfc38c98f6d26b89b18bf5a8cadfa11"
+      "computedHash": "f34dc69178aaa4c6d91e54de54c1a98f8bfc38c98f6d26b89b18bf5a8cadfa11",
+      "sha256": "ef5d6b916bb0b8bdacfe00f9bcffb0e47e9eda8c14b81d24e3e9780cfc8e315d"
     },
     "telegram-bot": {
       "source": "claude-office-skills/skills",
       "sourceType": "github",
       "skillPath": "telegram-bot/SKILL.md",
-      "computedHash": "8c9554098e2f9c4baa53980e09f3bd7374034c1948e73341b691a33ebb473db9"
+      "computedHash": "8c9554098e2f9c4baa53980e09f3bd7374034c1948e73341b691a33ebb473db9",
+      "sha256": "b2d5f70fd6be7db57fc38b2ff7bdb112911d4050f24b967c36182f9a2cfc85d4"
     },
     "vue-best-practices": {
       "source": "hyf0/vue-skills",
       "sourceType": "github",
       "skillPath": "skills/vue-best-practices/SKILL.md",
-      "computedHash": "3df585ad31aec78fe55c56c1411262737e6b231677a3153dec512a882fde80cd"
+      "computedHash": "3df585ad31aec78fe55c56c1411262737e6b231677a3153dec512a882fde80cd",
+      "sha256": "05b373713e6bbd216fb3ee9709289b68bcdeb9eac8ffea477e35bdbd8e0f9acd"
     },
     "zenstack-access-control": {
       "source": "zenstackhq/skills",
       "sourceType": "github",
       "skillPath": "skills/zenstack-access-control/SKILL.md",
-      "computedHash": "93ac8a3ace50f267c9e032eb1d38171d5f6e8103eedcbbe0f6abcb5037a1a6b3"
+      "computedHash": "93ac8a3ace50f267c9e032eb1d38171d5f6e8103eedcbbe0f6abcb5037a1a6b3",
+      "sha256": "12a0f3ac57447cbecfab3a09f4dd6a9442362186834497e9868eb8f6856cbef4"
     },
     "zenstack-crud-server": {
       "source": "zenstackhq/skills",
       "sourceType": "github",
       "skillPath": "skills/zenstack-crud-server/SKILL.md",
-      "computedHash": "9a194cded79e266bf227ec27a29925709a335e5cd74819f7f271e92673bb82f9"
+      "computedHash": "9a194cded79e266bf227ec27a29925709a335e5cd74819f7f271e92673bb82f9",
+      "sha256": "c73e92bcb45753b5d8094b0fc3d525c0af255aedafdcbe52f70a28a1a840e2aa"
     },
     "zenstack-db-migration": {
       "source": "zenstackhq/skills",
       "sourceType": "github",
       "skillPath": "skills/zenstack-db-migration/SKILL.md",
-      "computedHash": "00f13e1bf20805a9acfa911addd404fabebf84a07c0e63e277c62372659c144b"
+      "computedHash": "00f13e1bf20805a9acfa911addd404fabebf84a07c0e63e277c62372659c144b",
+      "sha256": "0084a68c468299a483c4ee08169ddda7981f89fc8a905662888d06c99e1b8193"
     },
     "zenstack-project-setup": {
       "source": "zenstackhq/skills",
       "sourceType": "github",
       "skillPath": "skills/zenstack-project-setup/SKILL.md",
-      "computedHash": "38f6d4cf0046a8017684bf6df827498bcada72bf2e50e6765fdfdf93146e1cb7"
+      "computedHash": "38f6d4cf0046a8017684bf6df827498bcada72bf2e50e6765fdfdf93146e1cb7",
+      "sha256": "99799abb0c1d06373da59c15ef6d120fbd158d7e35019394b8c9976f7795b0a0"
     },
     "zenstack-querying": {
       "source": "zenstackhq/skills",
       "sourceType": "github",
       "skillPath": "skills/zenstack-querying/SKILL.md",
-      "computedHash": "9aab0e4440b4bff4ea67b38933cbaafb15d4af91ae1e6d84b274c6a575d855a9"
+      "computedHash": "9aab0e4440b4bff4ea67b38933cbaafb15d4af91ae1e6d84b274c6a575d855a9",
+      "sha256": "96fad754e6aa597627077e528d6ccd41ca3e607491c8e5855905f5471e3fb84f"
     },
     "zenstack-schema-modeling": {
       "source": "zenstackhq/skills",
       "sourceType": "github",
       "skillPath": "skills/zenstack-schema-modeling/SKILL.md",
-      "computedHash": "452f7b1cb000692e196ebc74ef12698dc4749153ac39a42bd36e551d35f7e309"
+      "computedHash": "452f7b1cb000692e196ebc74ef12698dc4749153ac39a42bd36e551d35f7e309",
+      "sha256": "0af13f9792a223deb3d4fe1a7f75b02c2761123ca077c9a61bdfa308cd78d47f"
     }
   }
 }

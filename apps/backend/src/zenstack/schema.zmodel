@@ -33,3 +33,18 @@ model RefreshToken {
 
   @@index([userId])
 }
+
+/// Append-only security audit trail. `metadata` is a JSON string and MUST NEVER
+/// contain secrets (passwords, tokens). Written for sensitive events such as the
+/// one-time admin bootstrap.
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  actor     String?
+  targetId  String?
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+}

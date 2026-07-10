@@ -19,7 +19,7 @@ corepack enable
 pnpm install
 
 # 2. configure
-cp .env.example .env        # edit secrets; JWT_* must be >= 16 chars
+cp .env.example .env        # edit secrets; JWT_ACCESS_SECRET / SERVICE_API_TOKEN >= 16 chars (dev)
 
 # 3. local infrastructure (Postgres + Redis)
 pnpm docker:up
@@ -27,7 +27,8 @@ pnpm docker:up
 # 4. database
 pnpm db:generate            # generate the ZenStack client
 pnpm db:migrate:dev         # create & apply the initial migration
-pnpm db:seed                # optional: seed admin@example.com / admin12345
+# create the first admin — no defaults; credentials come from you:
+SEED_ADMIN_EMAIL=admin@yourco.dev SEED_ADMIN_PASSWORD='<12+ chars>' pnpm bootstrap-admin
 
 # 5. run everything
 pnpm dev
@@ -69,22 +70,29 @@ debugging failures. See [`docs/OBSERVABILITY.md`](./docs/OBSERVABILITY.md) for w
 to enable traces/metrics/logs with correlation, how to read it in OpenObserve, sampling/alerts, and how
 to switch backends.
 
-```bash
-# Local full-stack smoke test — NO --env-file. Compose's in-network defaults wire the services by name
-# (postgres/redis/otel-collector) and use throwaway change-me secrets — what a local run wants. Passing
-# --env-file .env here injects the host-oriented root .env (DATABASE_URL=…@localhost) and the backend
-# crash-loops looking for Postgres inside its own container.
-docker compose -f infra/docker/docker-compose.yml up -d                                  # base stack
-OTEL_SDK_DISABLED=false docker compose -f infra/docker/docker-compose.yml --profile observability up -d   # + OpenObserve
+Compose is split: `docker-compose.yml` is the **production-hardened base** (Caddy TLS edge, segmented
+networks, non-root/read-only containers, pinned images, `NODE_ENV=production`), and
+`docker-compose.dev.yml` is the **local overlay** (republished ports, local build, `NODE_ENV=development`).
 
-# Production — Ansible renders a container-oriented .env (service-name hosts + real vault secrets) and
-# passes --env-file. Don't hand-run raw compose against a public host.
-pnpm deploy:vps
+```bash
+# Local full-stack — layer the dev overlay. It republishes host ports and runs as NODE_ENV=development
+# so @app/config's production checks (no placeholders, HTTPS origins) don't fire on a throwaway stack.
+pnpm docker:dev                                                                          # base + dev overlay
+OTEL_SDK_DISABLED=false docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml \
+  --profile observability up -d                                                          # + OpenObserve
+
+# Production — images are BUILT ONCE in CI, pushed by immutable digest, signed (cosign), and recorded in
+# a release manifest. Ansible copies the compose/config to the host and PULLS the digests (never builds on
+# the VPS); preflight rejects placeholders/branches/example.com before any change. Real prod:
+pnpm deploy:vps -- -e deployment_environment=production
+pnpm deploy:rollback -e "rollback_tag=vX.Y.Z backend_image=…@sha256:… frontend_image=… bot_image=…"
 ```
 
 Manage secrets with Ansible Vault or SOPS — never commit a real `.env`. The repo-root `.env` /
-`.env.example` is **host-oriented** (for `pnpm dev`); the container stack gets its in-network hosts from
-Compose defaults locally, and from the Ansible-rendered `.env` in production.
+`.env.example` is **host-oriented** (for `pnpm dev`); the container stack gets in-network hosts from the
+dev overlay locally, and from the Ansible-rendered container `.env` in production. Security, TLS,
+backup/restore, rollback, secret-rotation and admin-bootstrap procedures are in
+[`docs/SECURITY.md`](./docs/SECURITY.md) and [`docs/runbooks/`](./docs/runbooks/).
 
 ## AI skills
 

@@ -6,7 +6,6 @@ import { defineConfig } from 'vitest/config';
 process.env.NODE_ENV ??= 'test';
 process.env.DATABASE_URL ??= 'postgresql://postgres:postgres@localhost:5432/app_e2e';
 process.env.JWT_ACCESS_SECRET ??= 'test-access-secret-0123456789abcdef';
-process.env.JWT_REFRESH_SECRET ??= 'test-refresh-secret-0123456789abcdef';
 process.env.SERVICE_API_TOKEN ??= 'test-service-token';
 process.env.COOKIE_DOMAIN ??= 'localhost';
 process.env.OTEL_SDK_DISABLED ??= 'true';

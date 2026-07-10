@@ -11,9 +11,10 @@ Full version in the [README quick start](../README.md#quick-start). Short versio
 ```bash
 corepack enable
 pnpm install
-cp .env.example .env          # JWT_ACCESS_SECRET / JWT_REFRESH_SECRET must be >= 16 chars
+cp .env.example .env          # JWT_ACCESS_SECRET / SERVICE_API_TOKEN >= 16 chars (dev); >= 32 in prod
 pnpm docker:up                # local postgres + redis
-pnpm db:generate && pnpm db:migrate:dev && pnpm db:seed
+pnpm db:generate && pnpm db:migrate:dev
+SEED_ADMIN_EMAIL=admin@yourco.dev SEED_ADMIN_PASSWORD='<12+ chars>' pnpm bootstrap-admin  # first admin (no defaults)
 pnpm dev
 ```
 
@@ -43,8 +44,9 @@ or real secrets.
 ```bash
 ansible-vault create infra/ansible/group_vars/all/vault.yml
 # set real: vault_postgres_password, vault_database_url,
-#           vault_jwt_access_secret / vault_jwt_refresh_secret (>= 16 chars, use long random),
-#           vault_service_api_token, vault_telegram_bot_token, vault_redis_url, ...
+#           vault_jwt_access_secret (>= 32 random chars — `openssl rand -base64 48`),
+#           vault_service_api_token (>= 32 random chars, distinct from the JWT secret),
+#           vault_telegram_bot_token, vault_redis_url, ...
 ```
 
 The playbook auto-loads `group_vars/all/vault.yml` if present. Deploy with the vault password

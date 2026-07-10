@@ -29,14 +29,25 @@ RUN pnpm install --frozen-lockfile
 COPY --from=pruner /app/out/full/ ./
 RUN pnpm exec turbo run build --filter=@app/telegram-bot
 
+# ---- runtime-base: slim runtime, no compiler toolchain ----------------------
+# The bot's runtime deps (grammy, ioredis, @grammyjs/storage-redis) are pure JS,
+# so the runner drops python3/make/g++ from the build base — smaller image and a
+# smaller attack surface.
+FROM node:22-bookworm-slim AS runtime-base
+ENV CI=true
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
+    && corepack prepare pnpm@11.9.0 --activate
+WORKDIR /app
+
 # ---- runner ------------------------------------------------------------------
-FROM base AS runner
+FROM runtime-base AS runner
 ENV NODE_ENV=production \
     COREPACK_HOME=/home/node/.corepack
 COPY --from=installer --chown=node:node /app ./
 USER node
-# The bot never runs pnpm at runtime (it just `node`s the built entrypoint),
-# but pre-caching keeps parity with the backend image.
-RUN corepack prepare pnpm@11.9.0 --activate
-# Long-polling worker: no inbound port, no HTTP healthcheck.
+# Long-polling worker: no inbound port, no HTTP healthcheck. It never runs pnpm at
+# runtime (just `node`s the built entrypoint), so no corepack pre-cache is needed.
 CMD ["node", "apps/telegram-bot/dist/index.js"]

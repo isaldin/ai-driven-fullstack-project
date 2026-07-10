@@ -1,0 +1,92 @@
+---
+# Production preflight assertions. Imported by deploy.yml BEFORE any server-state
+# change (copy/pull/migrate). A real production deploy must pass `-e
+# deployment_environment=production`; the strict checks below then fail fast on
+# placeholders, mutable refs, non-digest images, example.com domains, weak Redis
+# auth, or a missing vault. `ansible-playbook --check` with the shipped
+# placeholder inventory still parses (strict checks are gated on the flag).
+#
+# Nothing here logs secret values.
+
+- name: Compute whether this is a production deploy
+  ansible.builtin.set_fact:
+    is_prod_deploy: "{{ deployment_environment | default('dev') == 'production' }}"
+
+- name: Announce non-production preflight (strict checks skipped)
+  ansible.builtin.debug:
+    msg: >-
+      deployment_environment != production — skipping strict production assertions.
+      Pass -e deployment_environment=production for a real deploy.
+  when: not is_prod_deploy
+
+- name: Production preflight assertions
+  when: is_prod_deploy
+  block:
+    - name: NODE_ENV must be production
+      ansible.builtin.assert:
+        that:
+          - node_env == 'production'
+        fail_msg: "node_env must be 'production' for a production deploy."
+
+    - name: Release ref must be immutable (not a moving branch)
+      ansible.builtin.assert:
+        that:
+          - repo_version is defined
+          - repo_version not in ['main', 'master', 'HEAD']
+        fail_msg: "repo_version must be a release tag / commit SHA, not a moving branch."
+
+    - name: Images must be pinned by digest (built + signed in CI)
+      ansible.builtin.assert:
+        that:
+          - backend_image is defined and '@sha256:' in backend_image
+          - frontend_image is defined and '@sha256:' in frontend_image
+          - bot_image is defined and '@sha256:' in bot_image
+        fail_msg: "backend_image/frontend_image/bot_image must be digest references (…@sha256:…) from the release manifest."
+
+    - name: Public domains must not be example.com placeholders
+      ansible.builtin.assert:
+        that:
+          - "'example.com' not in app_domain"
+          - "'example.com' not in api_domain"
+          - "'example.com' not in cors_origin"
+          - "'example.com' not in cookie_domain"
+          - "'example.com' not in vite_api_url"
+        fail_msg: "Set your real domains — example.com placeholders are not allowed in production."
+
+    - name: Public URLs must use HTTPS
+      ansible.builtin.assert:
+        that:
+          - cors_origin.startswith('https://')
+          - vite_api_url.startswith('https://')
+        fail_msg: "cors_origin and vite_api_url must be https:// in production."
+
+    # Secrets: no shipped placeholders. Checked as a group so no value is printed.
+    - name: Secrets must not be template placeholders
+      ansible.builtin.assert:
+        that:
+          - "'change-me' not in vault_postgres_password"
+          - "'change-me' not in vault_database_url"
+          - "'change-me' not in vault_jwt_access_secret"
+          - "'REPLACE_WITH' not in vault_jwt_access_secret"
+          - "'change-me' not in vault_service_api_token"
+          - "'REPLACE_WITH' not in vault_service_api_token"
+          - "'replace-with-botfather' not in vault_telegram_bot_token"
+          - vault_jwt_access_secret | length >= 32
+          - vault_service_api_token | length >= 32
+          - vault_jwt_access_secret != vault_service_api_token
+        fail_msg: "One or more secrets are still placeholders / too short / duplicated. Provide real vault secrets (see docs/runbooks/SECRET_ROTATION.md)."
+      no_log: true
+
+    # Redis auth consistency: if a password is set, REDIS_URL must carry it.
+    - name: Redis password and REDIS_URL must be consistent
+      ansible.builtin.assert:
+        that:
+          - (redis_password | default('') | length == 0) or (redis_password in vault_redis_url)
+        fail_msg: "REDIS_PASSWORD is set but not embedded in vault_redis_url (redis://:PASSWORD@redis:6379)."
+      no_log: true
+
+    - name: Frontend build-time URL must be set
+      ansible.builtin.assert:
+        that:
+          - vite_api_url | length > 0
+        fail_msg: "vite_api_url must be set (baked into the frontend image at release build time)."

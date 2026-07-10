@@ -1,0 +1,196 @@
+name: Release
+
+# Immutable release pipeline: build each image ONCE from a fixed commit, run the
+# same gates as CI, push by digest to GHCR, attach SBOM + SLSA provenance, sign
+# with cosign, and emit a release manifest (commit SHA + digests + migration
+# version). Deploys then PULL these digests — images are never rebuilt on the VPS.
+#
+# Trigger: push a semver tag (v1.2.3) or run manually against a ref.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA or ref to release
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # Re-run the blocking gates on the exact commit being released.
+  gates:
+    name: gates (audit · secrets · exceptions)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - name: Setup workspace
+        uses: ./.github/actions/setup
+      - name: Validate security exceptions
+        run: node scripts/check-security-exceptions.mjs
+      - name: Audit production dependencies (>= high)
+        run: node scripts/audit-ci.mjs
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+      - name: Secret scan
+        run: gitleaks dir . --config .gitleaks.toml --redact --no-banner --exit-code 1
+
+  build:
+    name: build · sign · attest
+    runs-on: ubuntu-latest
+    needs: [gates]
+    permissions:
+      contents: write # attach release manifest
+      packages: write # push to GHCR
+      id-token: write # cosign keyless (OIDC)
+      attestations: write # provenance attestation
+    outputs:
+      backend_digest: ${{ steps.digests.outputs.backend }}
+      frontend_digest: ${{ steps.digests.outputs.frontend }}
+      bot_digest: ${{ steps.digests.outputs.bot }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Resolve lowercase image namespace
+        id: ns
+        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push backend
+        id: build_backend
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ steps.ns.outputs.repo }}/backend:${{ github.ref_name }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Build + push frontend
+        id: build_frontend
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile.frontend
+          push: true
+          build-args: VITE_API_URL=${{ vars.RELEASE_VITE_API_URL || 'https://api.example.com' }}
+          tags: ${{ env.REGISTRY }}/${{ steps.ns.outputs.repo }}/frontend:${{ github.ref_name }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Build + push bot
+        id: build_bot
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile.bot
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ steps.ns.outputs.repo }}/telegram-bot:${{ github.ref_name }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Collect digests
+        id: digests
+        env:
+          NS: ${{ steps.ns.outputs.repo }}
+        run: |
+          set -euo pipefail
+          echo "backend=${REGISTRY}/${NS}/backend@${{ steps.build_backend.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${REGISTRY}/${NS}/frontend@${{ steps.build_frontend.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "bot=${REGISTRY}/${NS}/telegram-bot@${{ steps.build_bot.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+      # Cosign keyless signatures over the immutable digests (verified before deploy).
+      - name: Sign images (cosign keyless)
+        env:
+          COSIGN_YES: "true"
+          NS: ${{ steps.ns.outputs.repo }}
+        run: |
+          set -euo pipefail
+          cosign sign "${REGISTRY}/${NS}/backend@${{ steps.build_backend.outputs.digest }}"
+          cosign sign "${REGISTRY}/${NS}/frontend@${{ steps.build_frontend.outputs.digest }}"
+          cosign sign "${REGISTRY}/${NS}/telegram-bot@${{ steps.build_bot.outputs.digest }}"
+
+      # Standalone CycloneDX SBOMs (in addition to the in-registry SBOM attestation).
+      - name: Generate CycloneDX SBOMs
+        uses: anchore/sbom-action@d8a2c0130026bf585de5c176ab8f7ce62d75bf04 # v0.20.7
+        with:
+          image: ${{ env.REGISTRY }}/${{ steps.ns.outputs.repo }}/backend@${{ steps.build_backend.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom-backend.cdx.json
+
+      - name: Write release manifest
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          BACKEND_IMAGE: ${{ steps.digests.outputs.backend }}
+          FRONTEND_IMAGE: ${{ steps.digests.outputs.frontend }}
+          BOT_IMAGE: ${{ steps.digests.outputs.bot }}
+        run: node scripts/release-manifest.mjs > release-manifest.json && cat release-manifest.json
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-manifest
+          path: |
+            release-manifest.json
+            sbom-backend.cdx.json
+          retention-days: 90
+
+  # Staging deploy + smoke, then a gated promotion of the SAME digests to prod.
+  # These are environment-gated placeholders: wire your staging/prod inventories
+  # and secrets, and GitHub environment protection rules provide the approval gate.
+  staging:
+    name: deploy to staging (same digests)
+    runs-on: ubuntu-latest
+    needs: [build]
+    environment: staging
+    steps:
+      - name: Record digests to deploy
+        run: |
+          echo "backend=${{ needs.build.outputs.backend_digest }}"
+          echo "frontend=${{ needs.build.outputs.frontend_digest }}"
+          echo "bot=${{ needs.build.outputs.bot_digest }}"
+          echo "Wire this to: pnpm deploy:vps with the digests above (see docs/runbooks/ROLLBACK.md)."
+
+  production:
+    name: promote to production (approval-gated)
+    runs-on: ubuntu-latest
+    needs: [build, staging]
+    environment: production # add required reviewers in repo settings for the approval gate
+    steps:
+      - name: Promote the SAME digests (no rebuild)
+        run: |
+          echo "Promoting identical digests validated in staging:"
+          echo "  backend=${{ needs.build.outputs.backend_digest }}"
+          echo "  frontend=${{ needs.build.outputs.frontend_digest }}"
+          echo "  bot=${{ needs.build.outputs.bot_digest }}"

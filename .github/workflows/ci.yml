@@ -15,13 +15,69 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# All third-party actions are pinned to a full commit SHA (supply-chain hardening).
+# The trailing `# vX.Y.Z` comment tracks the human-readable version for Dependabot.
+
 jobs:
+  # ---- Blocking security gates -----------------------------------------------
+  # Dependency audit + machine-readable exception policy. Fails the PR/release on
+  # any un-excepted critical/high production advisory.
+  dependency-audit:
+    name: dependency audit (pnpm)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup workspace
+        uses: ./.github/actions/setup
+
+      # Validate the exception allowlist first: unowned / expired / over-long
+      # exceptions fail here before they can suppress a finding below.
+      - name: Validate security exceptions
+        run: node scripts/check-security-exceptions.mjs
+
+      # Blocks on critical/high prod advisories not covered by an active exception.
+      # Distinguishes a registry outage (exit 2) from a clean result (exit 0).
+      - name: Audit production dependencies (>= high)
+        run: node scripts/audit-ci.mjs
+
+      # Build/dev advisories are triaged but non-blocking for the template baseline
+      # (a build dep can still compromise an artifact — surface it, don't ignore it).
+      - name: Audit all dependencies (advisory)
+        continue-on-error: true
+        run: node scripts/audit-ci.mjs --dev --level high
+
+  # Secret scanning: fails on any credential-shaped string in the tree that isn't
+  # an allowlisted template placeholder (.gitleaks.toml). Self-contained (pinned
+  # gitleaks binary), so it needs no marketplace action or org license.
+  secret-scan:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install gitleaks (pinned)
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan working tree (baseline + new secrets)
+        run: gitleaks dir . --config .gitleaks.toml --redact --no-banner --exit-code 1
+
+  # ---- typecheck · lint · test · build · backend e2e ------------------------
   ci:
     name: typecheck · lint · test · build · e2e
     runs-on: ubuntu-latest
 
     # Postgres for the backend e2e step. The e2e global-setup creates the
-    # database and pushes the ZenStack schema, so no migration step is needed.
+    # database and pushes the ZenStack schema (fast path). Committed migrations
+    # are exercised separately by the migration-gate jobs below.
     services:
       postgres:
         image: postgres:17
@@ -39,7 +95,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # corepack + Node 22 (pnpm store cache) + frozen install + db:generate.
       - name: Setup workspace
@@ -48,12 +104,9 @@ jobs:
           generate: 'true'
 
       # Persist Turbo's local task cache across runs so unchanged
-      # typecheck/test/build tasks are restored instead of recomputed. Parallel
-      # jobs don't share within a run (cache saves at job end) — the win is
-      # run-to-run. actions/cache failures are non-fatal (warn on self-hosted
-      # runners without a cache backend), so this never breaks the job.
+      # typecheck/test/build tasks are restored instead of recomputed.
       - name: Turbo cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: .turbo
           key: turbo-${{ runner.os }}-ci-${{ github.sha }}
@@ -74,18 +127,172 @@ jobs:
         run: pnpm build
 
       - name: Backend e2e tests
-        # `localhost` is correct on GitHub-hosted runners: the job runs directly on
-        # the VM and the postgres service is port-mapped to localhost. On container-
-        # based runners (self-hosted Gitea act_runner / nektos `act`) the job runs in
-        # a container and the service is a sibling reachable by name — set a repo/org
-        # Actions variable E2E_DB_HOST=postgres there.
+        # `localhost` is correct on GitHub-hosted runners; on container-based
+        # self-hosted runners set a repo/org Actions variable E2E_DB_HOST=postgres.
         env:
           DATABASE_URL: postgresql://postgres:postgres@${{ vars.E2E_DB_HOST || 'localhost' }}:5432/app_e2e
         run: pnpm --filter @app/backend test:e2e
 
-  # Frontend e2e: Playwright drives a real browser against the built stack
-  # (backend dist + Vite dev server) on dedicated ports, using an isolated
-  # `app_e2e_web` database that its globalSetup creates, pushes and seeds.
+  # ---- Migration gates: production `zen migrate deploy` on committed migrations
+  # Fresh install and previous-release upgrade, both against a clean Postgres, then
+  # an application smoke test. A broken/missing migration turns these red.
+  migration-fresh:
+    name: migration gate · fresh install
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_migrate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@${{ vars.E2E_DB_HOST || 'localhost' }}:5432/app_migrate
+      JWT_ACCESS_SECRET: ci-migrate-access-secret-aaaaaaaaaaaa
+      SERVICE_API_TOKEN: ci-migrate-service-token-bbbbbbbbbbbb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup workspace
+        uses: ./.github/actions/setup
+        with:
+          generate: 'true'
+
+      - name: Build backend
+        run: pnpm --filter @app/backend build
+
+      - name: Apply committed migrations (zen migrate deploy)
+        run: pnpm --filter @app/backend db:migrate
+
+      - name: Assert migration history is in sync
+        run: pnpm --filter @app/backend exec zen migrate status --schema src/zenstack/schema.zmodel
+
+      - name: Application smoke test
+        run: pnpm --filter @app/backend db:smoke
+
+  migration-upgrade:
+    name: migration gate · upgrade from previous release
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_upgrade
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@${{ vars.E2E_DB_HOST || 'localhost' }}:5432/app_upgrade
+      JWT_ACCESS_SECRET: ci-migrate-access-secret-aaaaaaaaaaaa
+      SERVICE_API_TOKEN: ci-migrate-service-token-bbbbbbbbbbbb
+    steps:
+      - name: Checkout (full history for previous-release resolution)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup workspace
+        uses: ./.github/actions/setup
+        with:
+          generate: 'true'
+
+      # Apply the PREVIOUS release's migrations, then the current ones on top, to
+      # prove real upgrades work — not just fresh installs. Falls back to the first
+      # commit when no release tag exists yet (template bootstrap).
+      - name: Upgrade previous-release schema to current
+        run: node scripts/migration-upgrade-gate.mjs
+
+      - name: Application smoke test
+        run: pnpm --filter @app/backend db:smoke
+
+  # ---- Backup / restore drill (self-contained) -------------------------------
+  # Seed a DB, take an encrypted off-host backup, restore it into an isolated DB
+  # and run integrity checks — proving the backup pipeline actually recovers.
+  backup-restore-drill:
+    name: backup + restore drill
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_bk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: ${{ vars.E2E_DB_HOST || 'localhost' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # The service is postgres:17, but ubuntu's default apt postgresql-client is
+      # older (22.04→14, 24.04→16) and pg_dump refuses a newer server ("aborting
+      # because of server version mismatch"). Install the matching major from the
+      # PostgreSQL APT repo (PGDG) so pg_dump/pg_restore >= server. Bump this when
+      # the postgres service major changes.
+      - name: Install PostgreSQL 17 client (match the service major)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates gnupg
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -sSf https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          pg_dump --version
+
+      - name: Seed a database
+        run: |
+          psql "postgresql://postgres:postgres@${PGHOST}:5432/app_bk" -v ON_ERROR_STOP=1 -c \
+            'CREATE TABLE "User"(id serial primary key, email text);
+             INSERT INTO "User"(email) SELECT '"'"'u'"'"'||g FROM generate_series(1,25) g;'
+
+      - name: Generate an ephemeral encrypt keypair
+        run: |
+          mkdir -p keys backups
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout keys/private.pem -out keys/cert.pem \
+            -days 1 -subj "/CN=ci-backup"
+
+      - name: Take an encrypted off-host backup
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@${{ vars.E2E_DB_HOST || 'localhost' }}:5432/app_bk
+          BACKUP_RECIPIENT_CERT: keys/cert.pem
+          BACKUP_DEST: backups
+          BACKUP_WORKDIR: work
+        run: bash scripts/backup/pg-backup.sh
+
+      - name: Restore drill into an isolated database
+        env:
+          BACKUP_DEST: backups
+          BACKUP_PRIVATE_KEY: keys/private.pem
+          RESTORE_DATABASE_URL: postgresql://postgres:postgres@${{ vars.E2E_DB_HOST || 'localhost' }}:5432/app_bk_restore
+        run: bash scripts/backup/restore-drill.sh
+
+  # ---- Frontend e2e (Playwright) --------------------------------------------
   e2e-web:
     name: frontend e2e (playwright)
     runs-on: ubuntu-latest
@@ -107,14 +314,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      # No db:generate: the `build` step below runs it via Turbo's task graph.
       - name: Setup workspace
         uses: ./.github/actions/setup
 
       - name: Turbo cache
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: .turbo
           key: turbo-${{ runner.os }}-web-${{ github.sha }}
@@ -122,18 +328,11 @@ jobs:
             turbo-${{ runner.os }}-web-
             turbo-${{ runner.os }}-
 
-      # Builds everything (turbo runs db:generate first). The e2e boots the
-      # backend from dist, so it must be built before Playwright starts it.
       - name: Build
         run: pnpm build
 
-      # Cache the browser binary so it isn't re-downloaded each run. `playwright
-      # install` skips the download when the binary is already present; only the
-      # (fast, mostly-preinstalled) apt deps still run. Key on the lockfile so a
-      # Playwright version bump busts it. Cache miss on self-hosted runners just
-      # re-downloads — safe.
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -143,10 +342,6 @@ jobs:
         run: pnpm --filter @app/frontend exec playwright install --with-deps chromium
 
       - name: Frontend e2e tests
-        # Host caveat (same as backend e2e): `localhost` on GitHub-hosted runners,
-        # `postgres` on container-based self-hosted runners (set E2E_DB_HOST=postgres).
-        # PW_CHROMIUM_NO_SANDBOX: leave unset on GitHub-hosted (non-root, sandbox works);
-        # set it to 1 on rootful container runners or Chromium refuses to launch.
         env:
           CI: 'true'
           E2E_DB_HOST: ${{ vars.E2E_DB_HOST || 'localhost' }}
@@ -154,32 +349,26 @@ jobs:
         run: pnpm --filter @app/frontend test:e2e
 
       - name: Upload Playwright report
-        # A debugging convenience, not a gate — never fail CI over it. Also lets the
-        # local Gitea harness stay green: Gitea (GHES) doesn't support the v4 artifact API.
         if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
           path: apps/frontend/playwright-report/
           retention-days: 7
 
-  # Build the deployable images so a broken Dockerfile / base-image CVE is caught
-  # in CI, not at deploy time. Images are built (not pushed) and scanned with Trivy.
-  # One matrix leg per image runs build + scan in parallel on its own runner.
+  # ---- Build + scan deployable images (BLOCKING Trivy) -----------------------
+  # Each image is built (not pushed) and scanned. A fixable HIGH/CRITICAL in the
+  # final runtime image fails the job unless covered by an active exception.
   docker-images:
     name: build + scan ${{ matrix.name }} (trivy)
     runs-on: ubuntu-latest
 
-    # security-events: write lets Trivy findings land in the Security tab (SARIF
-    # upload), scoped to this job. A job-level permissions block replaces the
-    # top-level one wholesale, so contents: read is re-declared for checkout.
     permissions:
       contents: read
       security-events: write
 
     strategy:
-      # One image's build/scan failing must not cancel the other legs.
       fail-fast: false
       matrix:
         include:
@@ -193,16 +382,20 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Needed for the exception-driven .trivyignore generator (reads YAML).
+      - name: Setup workspace
+        uses: ./.github/actions/setup
+
+      - name: Generate .trivyignore from active exceptions
+        run: node scripts/check-security-exceptions.mjs --write-trivyignore
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
-      # No external build cache (cache-from/to) so this runs identically on
-      # GitHub-hosted and container-based self-hosted runners; `load: true` puts
-      # the image in the local daemon so Trivy can scan it.
       - name: Build ${{ matrix.name }} image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
           file: ${{ matrix.file }}
@@ -211,22 +404,22 @@ jobs:
           tags: app-${{ matrix.name }}:ci
           build-args: ${{ matrix.build-args }}
 
-      # Advisory, non-gating (exit-code 0 + continue-on-error): print HIGH/CRITICAL
-      # fixable CVEs to the logs without blocking merges on base-image drift.
-      # Third-party action pinned to a full commit SHA (supply-chain hardening).
-      - name: Scan ${{ matrix.name }} image (Trivy · table)
-        continue-on-error: true
+      # GATE: non-zero on fixable HIGH/CRITICAL in the runtime image. `.trivyignore`
+      # (from the exception allowlist) is honoured automatically. No continue-on-error.
+      - name: Scan ${{ matrix.name }} image (Trivy · gate)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: app-${{ matrix.name }}:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: '0'
+          exit-code: '1'
           format: table
+          trivyignores: .trivyignore
 
-      # Same scan as SARIF so findings are trackable in the Security tab over time,
-      # not just buried in logs. Non-gating.
+      # Same scan as SARIF for the Security tab. Runs even if the gate failed, so a
+      # blocked finding is still tracked over time. Non-gating.
       - name: Scan ${{ matrix.name }} image (Trivy · SARIF)
+        if: ${{ !cancelled() }}
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -238,11 +431,23 @@ jobs:
           output: trivy-${{ matrix.name }}.sarif
 
       - name: Upload Trivy SARIF to code scanning
-        # Visibility convenience, never a gate. Also keeps the local Gitea harness
-        # green: Gitea (GHES) doesn't implement the code-scanning upload API.
         if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@a8d1ac45b9a34d11fe398d5503176af0d06b303e # v3.30.7
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
           category: trivy-${{ matrix.name }}
+
+      # Config + secret misconfiguration scan of the image filesystem (advisory).
+      # Secrets baked into a layer are surfaced here in addition to the source-tree
+      # gitleaks gate.
+      - name: Scan ${{ matrix.name }} image config/secrets (Trivy · advisory)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: app-${{ matrix.name }}:ci
+          scanners: secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+          format: table

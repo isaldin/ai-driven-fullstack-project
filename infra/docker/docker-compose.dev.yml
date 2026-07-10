@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────
+# LOCAL DEVELOPMENT overlay for docker-compose.yml.
+#
+#   docker compose -f infra/docker/docker-compose.yml \
+#                  -f infra/docker/docker-compose.dev.yml up -d --build
+#
+# What it changes vs the production base:
+#   - republishes Postgres/Redis/backend/frontend on the host (so `pnpm dev` and a
+#     browser can reach them directly);
+#   - flips NODE_ENV back to `development` and DEPLOYMENT_MODE to `standalone`, so
+#     @app/config's production checks (no placeholders, HTTPS origins, no localhost)
+#     don't fire on a throwaway local stack;
+#   - Caddy stays OFF because it's gated behind the `edge` profile (not enabled here).
+#
+# This is a throwaway stack: the `change-me` secret defaults from the base are fine.
+# ─────────────────────────────────────────────────────────────
+
+name: app
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+
+  backend:
+    environment:
+      NODE_ENV: development
+      DEPLOYMENT_MODE: standalone
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+
+  frontend:
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+
+  telegram-bot:
+    environment:
+      NODE_ENV: development
+      DEPLOYMENT_MODE: standalone
+
+  # Local observability keeps its published ports (browser OTLP + OpenObserve UI).
+  openobserve:
+    ports:
+      - "127.0.0.1:${OPENOBSERVE_PORT:-5080}:5080"
+
+  otel-collector:
+    ports:
+      - "127.0.0.1:${OTEL_COLLECTOR_PORT:-4318}:4318"
