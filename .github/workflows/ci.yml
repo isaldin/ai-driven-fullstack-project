@@ -166,8 +166,13 @@ jobs:
         with:
           generate: 'true'
 
-      - name: Build backend
-        run: pnpm --filter @app/backend build
+      # Build @app/backend AND its workspace deps (@app/config, @app/contracts,
+      # @app/observability) via turbo's ^build DAG. A bare `pnpm --filter
+      # @app/backend build` runs only the backend's own tsc, so the unbuilt deps
+      # can't be resolved (TS2307) — and db:smoke below imports @app/config at
+      # runtime. Mirrors Dockerfile.backend.
+      - name: Build backend (+ workspace deps)
+        run: pnpm exec turbo run build --filter=@app/backend
 
       - name: Apply committed migrations (zen migrate deploy)
         run: pnpm --filter @app/backend db:migrate
@@ -209,6 +214,11 @@ jobs:
         uses: ./.github/actions/setup
         with:
           generate: 'true'
+
+      # db:smoke below imports @app/config at runtime; build the workspace deps
+      # first (turbo ^build DAG). zen migrate deploy itself needs no build.
+      - name: Build backend (+ workspace deps)
+        run: pnpm exec turbo run build --filter=@app/backend
 
       # Apply the PREVIOUS release's migrations, then the current ones on top, to
       # prove real upgrades work — not just fresh installs. Falls back to the first
