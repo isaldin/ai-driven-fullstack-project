@@ -25,8 +25,8 @@
     "@app/tsconfig": "workspace:*",
     "@swc-node/register": "1.11.1",
     "@swc/core": "1.15.43",
-    "@types/node": "26.1.0",
-    "typescript": "5.9.3",
-    "vitest": "4.1.9"
+    "@types/node": "26.1.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
   }
 }
