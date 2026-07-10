@@ -25,15 +25,19 @@ Health http://localhost:3000/health/ready.
 
 ### 1. Point it at your own git remote
 
-The repo ships with **no remote** and a placeholder `repo_url`. The Ansible deploy clones from that
-URL onto the VPS, so it must be real.
+The repo ships with **no remote**. Push it to your own GitHub repo so Actions can run CI and the
+release pipeline — `release.yml` builds each image, cosign-signs it, and pushes it **by digest** to
+*your* GHCR. The VPS never clones or builds; it pulls those signed digests (see [Deploy](#deploy)).
 
 ```bash
 git remote add origin git@github.com:<you>/<repo>.git
 git push -u origin main
 ```
 
-Then set `repo_url` (and `repo_version`) in `infra/ansible/group_vars/all.yml`.
+Then, in `infra/ansible/group_vars/all.yml`, set the values tied to your repo: `registry`
+(`ghcr.io/<you>/<repo>`) and `cosign_identity_regexp` (must match your `release.yml` OIDC identity).
+The per-release `repo_version` (the release tag) and the `*_image` `…@sha256:…` digests are supplied
+at deploy time from the release manifest — see [Deploy](#deploy).
 
 ### 2. Provide real secrets (Ansible Vault)
 
@@ -62,22 +66,38 @@ remove the `telegram-bot` service from `infra/docker/docker-compose.yml`.
 
 ## Deploy
 
-```bash
-pnpm deploy:vps -- --ask-vault-pass
-```
-
-The playbook is idempotent: clone the repo → render `.env` (0600, root-owned) →
-`docker compose build` → start postgres/redis → `zen migrate deploy` → bring the full stack up.
-
-Smoke-test the exact Compose stack locally first (no VPS needed):
+A production deploy runs **immutable image digests**, so cut a release first:
 
 ```bash
-docker compose --env-file .env -f infra/docker/docker-compose.yml up -d --build
-curl localhost:3000/health/ready      # -> 200
+git tag v0.1.0 && git push origin v0.1.0   # release.yml: build → cosign-sign → push digests to GHCR + manifest
 ```
 
-> `--env-file .env` is required — Compose resolves `${VAR}` from the compose file's directory, not
-> the repo root. Omitting it silently falls back to the `change-me` defaults. See `AGENTS.md`.
+Copy that release's `repo_version` tag and its `backend_image` / `frontend_image` / `bot_image`
+`…@sha256:…` digests into `group_vars/all.yml` (or pass them with `-e`), then deploy:
+
+```bash
+pnpm deploy:vps -- -e deployment_environment=production --ask-vault-pass
+```
+
+The playbook is idempotent and **never clones or builds on the VPS**: production preflight (rejects
+placeholders / moving branches / non-digest images) → copy compose + config to the host → render
+`.env` (0600, root-owned) → cosign-verify the digests → `docker compose pull` them → start
+postgres/redis → `zen migrate deploy` → bring the full stack up → readiness check → write the release
+manifest. Rollback = `pnpm deploy:rollback` with the previous release's tag + digests.
+
+Sanity-check the full stack locally first (no VPS, no release needed). Use the **dev overlay** — it
+builds the images locally and runs as `NODE_ENV=development` so `@app/config`'s production checks
+don't fire:
+
+```bash
+pnpm docker:dev                        # base + dev overlay: build, republish host ports, dev mode
+curl localhost:3000/health/ready       # -> 200
+```
+
+> Don't run the bare production base (`-f docker-compose.yml` alone) with your dev `.env`: it boots as
+> `NODE_ENV=production` and `@app/config` fails fast on the placeholder secrets / non-HTTPS origins.
+> The hardened base is validated in CI (e2e + image scan) and by the Ansible preflight — not by a
+> casual local run. See `AGENTS.md`.
 
 ## CI
 
