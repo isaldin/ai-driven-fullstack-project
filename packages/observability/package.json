@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@app/tsconfig": "workspace:*",
-    "@opentelemetry/context-async-hooks": "2.8.0",
+    "@opentelemetry/context-async-hooks": "2.9.0",
     "vitest": "4.1.9"
   }
 }
