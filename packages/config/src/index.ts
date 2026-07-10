@@ -42,6 +42,9 @@ export const envSchema = z.object({
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().default(''),
   OTEL_EXPORTER_OTLP_HEADERS: z.string().default(''),
   METRICS_EXPORTER: z.enum(['otlp', 'prometheus']).default('otlp'),
+  // Verbose per-middleware Express spans turn one request into ~20 spans. Off by default
+  // (traces show the HTTP server span + route handler); flip to inspect middleware timing.
+  OTEL_VERBOSE_SPANS: envBool(false),
   SENTRY_DSN: z.string().default(''),
 });
 

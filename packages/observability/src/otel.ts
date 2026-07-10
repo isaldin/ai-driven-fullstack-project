@@ -28,6 +28,8 @@ export interface OtelOptions {
   /** 'otlp' pushes metrics over OTLP; 'prometheus' serves a pull `/metrics` endpoint. */
   metricsExporter?: 'otlp' | 'prometheus';
   prometheusPort?: number;
+  /** Keep verbose per-middleware Express spans (default false — one HTTP span per request). */
+  verboseSpans?: boolean;
   disabled?: boolean;
 }
 
@@ -48,12 +50,25 @@ export function buildResource(options: OtelOptions): Resource {
 }
 
 /** Auto-instrumentations tuned for a web service: no noisy fs spans, health probes ignored. */
-export function buildInstrumentations(): Instrumentation[] {
+export function buildInstrumentations(verboseSpans = false): Instrumentation[] {
   return getNodeAutoInstrumentations({
     '@opentelemetry/instrumentation-fs': { enabled: false },
     '@opentelemetry/instrumentation-http': {
       ignoreIncomingRequestHook: (req) => (req.url ?? '').startsWith('/health'),
     },
+    // The Express/NestJS request pipeline emits one span per middleware and per route layer.
+    // Those come from the express, router (Express 5 / NestJS 11 route via the standalone
+    // `router` package) and connect instrumentations — together they turn a single request
+    // into ~20 spans of noise around the one HTTP server span. Off by default; set
+    // OTEL_VERBOSE_SPANS=true to inspect middleware/route-layer timing.
+    '@opentelemetry/instrumentation-express': { enabled: verboseSpans },
+    '@opentelemetry/instrumentation-router': { enabled: verboseSpans },
+    '@opentelemetry/instrumentation-connect': { enabled: verboseSpans },
+    // Pino logs go to stdout and are shipped by the OTel Collector (see
+    // docs/OBSERVABILITY.md), not the OTel Logs SDK. The pino auto-instrumentation would
+    // only duplicate the trace-context injection traceContextMixin already does, and its
+    // log-sending is a no-op here anyway (no LoggerProvider on the NodeSDK).
+    '@opentelemetry/instrumentation-pino': { enabled: false },
   });
 }
 
@@ -84,7 +99,7 @@ export function buildSdk(options: OtelOptions, overrides: SdkExporterOverrides =
     resource: buildResource(options),
     ...(traceExporter ? { traceExporter } : {}),
     metricReader,
-    instrumentations: [buildInstrumentations()],
+    instrumentations: [buildInstrumentations(options.verboseSpans)],
   });
 }
 
@@ -106,6 +121,10 @@ export async function stopOtel(): Promise<void> {
   sdk = undefined;
 }
 
+/**
+ * Parse the OTLP headers env format (comma-separated `key=value`) into a header object.
+ * Splits on the first `=` per pair so base64 padding in a value is preserved.
+ */
 function parseHeaders(raw?: string): Record<string, string> | undefined {
   if (!raw) return undefined;
   const out: Record<string, string> = {};

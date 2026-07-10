@@ -3,8 +3,10 @@ import type { RegisterInput, UserDto } from '@app/contracts';
 import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import argon2 from 'argon2';
+import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../config/app-config.js';
 import { DatabaseService } from '../database/database.service.js';
+import { recordLoginAttempt } from '../observability/metrics.js';
 import type { AuthUser } from './types.js';
 
 interface IssuedTokens {
@@ -18,7 +20,10 @@ export class AuthService {
     private readonly db: DatabaseService,
     private readonly jwt: JwtService,
     private readonly config: AppConfig,
-  ) {}
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(AuthService.name);
+  }
 
   async register(input: RegisterInput): Promise<UserDto> {
     const existing = await this.db.client.user.findUnique({ where: { email: input.email } });
@@ -40,7 +45,17 @@ export class AuthService {
   }
 
   async login(input: { email: string; password: string }): Promise<IssuedTokens> {
-    const user = await this.validateUser(input.email, input.password);
+    let user: AuthUser;
+    try {
+      user = await this.validateUser(input.email, input.password);
+    } catch (err) {
+      recordLoginAttempt('failure');
+      throw err;
+    }
+    recordLoginAttempt('success');
+    // Structured app log emitted inside the request span — the trace-context mixin
+    // stamps trace_id/span_id, so this line correlates with its trace in OpenObserve.
+    this.logger.info({ userId: user.id }, 'login succeeded');
     return this.issueTokens(user);
   }
 

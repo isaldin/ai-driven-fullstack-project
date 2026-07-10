@@ -33,11 +33,15 @@ cookie_domain: "example.com"
 vite_api_url: "https://api.example.com"
 backend_url: "http://backend:3000" # in-network service address for the bot
 
-# Observability (OTLP -> OpenObserve). Disabled by default.
+# Observability (app -> OTel Collector -> OpenObserve). Disabled by default. Enable by setting
+# compose_profiles: ["observability"] above AND otel_sdk_disabled: "false". The app pushes OTLP to the
+# collector (the single egress; it holds the OpenObserve credentials) — NOT to OpenObserve directly.
 log_level: info
-otel_service_name: app
+# Leave empty so Compose assigns per-service names (app-backend / app-telegram-bot); a value here
+# collapses every service to one name in traces, which hurts cross-service error inspection.
+otel_service_name: ""
 otel_sdk_disabled: "true"
-otel_exporter_otlp_endpoint: "http://openobserve:5080/api/default"
+otel_exporter_otlp_endpoint: "http://otel-collector:4318"
 otel_exporter_otlp_headers: ""
 metrics_exporter: otlp
 

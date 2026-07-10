@@ -20,10 +20,12 @@ function setup() {
   const config = {
     env: { JWT_ACCESS_SECRET: 's'.repeat(32), JWT_ACCESS_TTL: 900, JWT_REFRESH_TTL: 1000 },
   };
+  const logger = { setContext: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const service = new AuthService(
     db as unknown as DatabaseService,
     jwt as never,
     config as unknown as AppConfig,
+    logger as never,
   );
   return { service, db, jwt };
 }

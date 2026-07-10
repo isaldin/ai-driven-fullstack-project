@@ -49,6 +49,18 @@
       "skillPath": "plugins/javascript-typescript/skills/nodejs-backend-patterns/SKILL.md",
       "computedHash": "b63b54d09c77cec0e84cdd42424c12909785f14bdb286c835c45420b885ff1f3"
     },
+    "otel-collector": {
+      "source": "dash0hq/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/otel-collector/SKILL.md",
+      "computedHash": "b7d40afc945e4e5a97e2f671b4cae440896303b93ee15290285fbf7e27b27c5e"
+    },
+    "otel-instrumentation": {
+      "source": "dash0hq/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/otel-instrumentation/SKILL.md",
+      "computedHash": "f34dc69178aaa4c6d91e54de54c1a98f8bfc38c98f6d26b89b18bf5a8cadfa11"
+    },
     "telegram-bot": {
       "source": "claude-office-skills/skills",
       "sourceType": "github",
