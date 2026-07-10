@@ -142,7 +142,7 @@ jobs:
 
       # Standalone CycloneDX SBOMs (in addition to the in-registry SBOM attestation).
       - name: Generate CycloneDX SBOMs
-        uses: anchore/sbom-action@d8a2c0130026bf585de5c176ab8f7ce62d75bf04 # v0.20.7
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: ${{ env.REGISTRY }}/${{ steps.ns.outputs.repo }}/backend@${{ steps.build_backend.outputs.digest }}
           format: cyclonedx-json
