@@ -147,14 +147,20 @@
       changed_when: true
 
     # --- Post-deploy verification -----------------------------------------
+    # The hardened prod compose does NOT publish the backend on the host (only
+    # Caddy publishes 80/443; the backend is `expose`-only, reachable in-network
+    # by name). So confirm readiness from INSIDE the backend container, where the
+    # app listens — this works regardless of host port publishing, TLS or DNS.
     - name: Wait for the backend to report ready
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ backend_port }}/health/ready"
-        status_code: 200
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f {{ compose_file }} --env-file .env exec -T backend
+          node -e "fetch('http://127.0.0.1:{{ backend_port }}/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        chdir: "{{ app_dir }}"
       register: backend_ready
       retries: 20
       delay: 6
-      until: backend_ready.status == 200
+      until: backend_ready.rc == 0
       changed_when: false
 
     # --- Record the release manifest for rollback -------------------------

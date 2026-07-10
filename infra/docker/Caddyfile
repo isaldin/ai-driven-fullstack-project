@@ -58,7 +58,11 @@
 # (the app origin), a small request-body cap and per-IP rate limiting, so a
 # public collector can't be used to flood telemetry storage.
 {$API_DOMAIN}/otlp/* {
-	@browser_otlp expression {$ENABLE_BROWSER_OTLP} == "true"
+	# Backtick-wrap the whole CEL so it stays a single, syntactically valid token
+	# no matter what ENABLE_BROWSER_OTLP expands to. Unquoted, an empty/unset value
+	# renders `== "true"` (invalid CEL) and Caddy refuses to start — which is the
+	# DEFAULT (browser tracing off), so the edge would be down out of the box.
+	@browser_otlp expression `"{$ENABLE_BROWSER_OTLP}" == "true"`
 	handle @browser_otlp {
 		import security_headers
 		request_body {

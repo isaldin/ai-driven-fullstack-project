@@ -84,14 +84,18 @@
         chdir: "{{ app_dir }}"
       changed_when: true
 
+    # Backend is `expose`-only in the hardened prod compose (only Caddy publishes
+    # host ports), so confirm readiness from INSIDE the backend container.
     - name: Wait for the backend to report ready
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ backend_port }}/health/ready"
-        status_code: 200
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f {{ compose_file }} --env-file .env exec -T backend
+          node -e "fetch('http://127.0.0.1:{{ backend_port }}/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        chdir: "{{ app_dir }}"
       register: backend_ready
       retries: 20
       delay: 6
-      until: backend_ready.status == 200
+      until: backend_ready.rc == 0
       changed_when: false
 
     - name: Record the rollback as the current release
