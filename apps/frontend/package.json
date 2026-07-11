@@ -24,7 +24,7 @@
     "@opentelemetry/sdk-trace-web": "2.8.0",
     "@opentelemetry/semantic-conventions": "1.41.1",
     "@primeuix/themes": "2.0.3",
-    "@sentry/vue": "10.64.0",
+    "@sentry/vue": "10.65.0",
     "@tanstack/vue-query": "5.101.2",
     "pinia": "3.0.4",
     "primevue": "4.5.5",
