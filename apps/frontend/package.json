@@ -21,7 +21,7 @@
     "@opentelemetry/instrumentation-fetch": "0.219.0",
     "@opentelemetry/resources": "2.9.0",
     "@opentelemetry/sdk-trace-base": "2.8.0",
-    "@opentelemetry/sdk-trace-web": "2.8.0",
+    "@opentelemetry/sdk-trace-web": "2.9.0",
     "@opentelemetry/semantic-conventions": "1.43.0",
     "@primeuix/themes": "2.0.3",
     "@sentry/vue": "10.65.0",
