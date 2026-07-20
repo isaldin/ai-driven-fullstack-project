@@ -18,7 +18,7 @@
     "@app/contracts": "workspace:*",
     "@app/observability": "workspace:*",
     "@grammyjs/storage-redis": "2.5.1",
-    "grammy": "1.44.0",
+    "grammy": "1.45.1",
     "ioredis": "5.11.1"
   },
   "devDependencies": {
