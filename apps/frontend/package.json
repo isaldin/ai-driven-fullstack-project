@@ -25,7 +25,7 @@
     "@opentelemetry/semantic-conventions": "1.43.0",
     "@primeuix/themes": "2.0.3",
     "@sentry/vue": "10.65.0",
-    "@tanstack/vue-query": "5.101.2",
+    "@tanstack/vue-query": "5.101.3",
     "pinia": "3.0.4",
     "primevue": "4.5.5",
     "vue": "3.5.39",
